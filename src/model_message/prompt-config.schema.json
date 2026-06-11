@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "pai-sdk prompt config",
+  "description": "A prompt definition: model + params + output schema + message templates with {variable} slots. Simple form: top-level system/user. General form: a messages list.",
+  "type": "object",
+  "required": ["name"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Prompt name (identifies it in logs and traces)."
+    },
+    "version": {
+      "type": ["string", "integer"],
+      "description": "Optional version marker."
+    },
+    "description": { "type": "string" },
+    "model": {
+      "type": "string",
+      "description": "provider/model-id string, e.g. 'anthropic/claude-haiku-4-5'. Optional — can be supplied at call time instead.",
+      "examples": ["anthropic/claude-haiku-4-5", "openai/gpt-5.4-mini", "google/gemini-2.5-flash"]
+    },
+    "params": {
+      "type": "object",
+      "description": "generate_text keyword arguments applied on every call (per-call overrides win).",
+      "properties": {
+        "max_output_tokens": { "type": "integer", "minimum": 1 },
+        "temperature": { "type": "number" },
+        "top_p": { "type": "number" },
+        "top_k": { "type": "integer" },
+        "presence_penalty": { "type": "number" },
+        "frequency_penalty": { "type": "number" },
+        "stop_sequences": { "type": "array", "items": { "type": "string" } },
+        "seed": { "type": "integer" },
+        "max_retries": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "output": {
+      "description": "Structured output: either field-type shorthand ({field: string|number|integer|boolean|'<type>[]'|[enum,...]|nested mapping}) or a full JSON Schema via {schema: {...}}.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["schema"],
+          "additionalProperties": false,
+          "properties": {
+            "schema": { "type": "object", "description": "Full JSON Schema for the output object." },
+            "name": { "type": "string" },
+            "description": { "type": "string" }
+          }
+        },
+        {
+          "allOf": [
+            { "$ref": "#/definitions/outputShorthand" },
+            { "not": { "required": ["schema"] } }
+          ]
+        }
+      ]
+    },
+    "system": {
+      "$ref": "#/definitions/simpleMessage",
+      "description": "Simple form: the system prompt template. Optimizable by default (it IS the instructions). Mutually exclusive with messages:."
+    },
+    "user": {
+      "$ref": "#/definitions/simpleMessage",
+      "description": "Simple form: the user message template. Never optimized. Mutually exclusive with messages:."
+    },
+    "messages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "General form: explicit message list (multiple system blocks, few-shot assistant turns, per-message optimize/id). Mutually exclusive with top-level system/user.",
+      "items": { "$ref": "#/definitions/message" }
+    }
+  },
+  "definitions": {
+    "templateString": {
+      "type": "string",
+      "description": "Text with {variable} placeholders. Plain {name} only; escape literal braces as {{ and }}."
+    },
+    "simpleMessage": {
+      "oneOf": [
+        { "$ref": "#/definitions/templateString" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "template": { "$ref": "#/definitions/templateString" },
+            "content": { "type": "string", "description": "Literal text — no interpolation, braces left alone." },
+            "optimize": { "type": "boolean" },
+            "id": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "required": ["role"],
+      "additionalProperties": false,
+      "properties": {
+        "role": { "enum": ["system", "user", "assistant"] },
+        "template": { "$ref": "#/definitions/templateString" },
+        "content": { "type": "string", "description": "Literal text — no interpolation." },
+        "optimize": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether a reflective optimizer (e.g. GEPA) may rewrite this text. Template mutations must preserve the {variable} set."
+        },
+        "id": { "type": "string", "description": "Stable id for addressing this message (e.g. with_template)." }
+      },
+      "oneOf": [
+        { "required": ["template"], "not": { "required": ["content"] } },
+        { "required": ["content"], "not": { "required": ["template"] } }
+      ]
+    },
+    "outputFieldType": {
+      "description": "string | number | integer | boolean (null means string), '<type>[]' for arrays, a list of literals for an enum, or a nested mapping for a nested object.",
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^(string|number|integer|int|boolean|bool)(\\[\\])*$" },
+        { "type": "array", "minItems": 1 },
+        { "$ref": "#/definitions/outputShorthand" }
+      ]
+    },
+    "outputShorthand": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/outputFieldType" }
+    }
+  }
+}

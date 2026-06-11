@@ -447,6 +447,21 @@ evolved.content_hash()                             # candidate identity
 evolved.to_dict()                                  # persist back to JSON/YAML
 ```
 
+The config format ships with a JSON Schema, so customers' editors validate
+and autocomplete prompt files. Point the YAML language server at it:
+
+```yaml
+# yaml-language-server: $schema=https://<where-you-host-it>/prompt-config.schema.json
+name: support-triage
+...
+```
+
+The schema file is packaged at `model_message/prompt-config.schema.json`
+(`from model_message import PROMPT_CONFIG_SCHEMA` for the parsed dict — print
+the path with `python -c "from model_message.prompts import PROMPT_CONFIG_SCHEMA_PATH; print(PROMPT_CONFIG_SCHEMA_PATH)"`),
+ready to be hosted by a prompt service. The same schema validates configs in
+CI before they ship.
+
 Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage`
 — subclasses that carry `template`, `variables`, `optimize`, and `id` alongside
 the rendered `content`. Providers see plain messages; `dump_messages` traces

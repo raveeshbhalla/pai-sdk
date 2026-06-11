@@ -158,6 +158,7 @@ from .stream import (
     ToolResultEvent,
 )
 from .prompts import (
+    PROMPT_CONFIG_SCHEMA,
     Prompt,
     PromptError,
     PromptMessage,
@@ -340,4 +341,5 @@ __all__ = [
     "load_prompt",
     "load_prompt_url",
     "compile_output_shorthand",
+    "PROMPT_CONFIG_SCHEMA",
 ]

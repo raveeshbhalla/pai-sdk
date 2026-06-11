@@ -401,3 +401,68 @@ async def test_unified_generate_and_stream_dispatch():
     model = FakeModel(steps=[text_step("hello")])
     s = stream(model=model, prompt="q")
     assert await s.text == "hello"
+
+
+# ---------------------------------------------------------------------------
+# The prompt-config JSON Schema (for editor validation of customer YAML)
+# ---------------------------------------------------------------------------
+
+from model_message.prompts import PROMPT_CONFIG_SCHEMA  # noqa: E402
+
+jsonschema = pytest.importorskip("jsonschema")
+
+SIMPLE_FORM = {
+    "name": "triage",
+    "model": "anthropic/claude-haiku-4-5",
+    "params": {"max_output_tokens": 500},
+    "output": {"urgency": ["low", "high"], "tags": "string[]", "user": {"id": "integer"}},
+    "system": "You triage tickets for {company}.",
+    "user": "Ticket: {ticket}",
+}
+
+
+def _validates(config) -> bool:
+    try:
+        jsonschema.validate(config, PROMPT_CONFIG_SCHEMA)
+        return True
+    except jsonschema.ValidationError:
+        return False
+
+
+def test_schema_accepts_what_loader_accepts():
+    # simple form, general form, and full-JSON-Schema output all validate
+    assert _validates(SIMPLE_FORM)
+    assert _validates(CONFIG)  # the general-form fixture from above
+    assert _validates(
+        {
+            "name": "x",
+            "output": {"schema": {"type": "object", "properties": {}}},
+            "system": {"template": "Hi {a}", "optimize": False},
+        }
+    )
+    # and the loader agrees on all three
+    for config in (SIMPLE_FORM, CONFIG):
+        load_prompt(json.loads(json.dumps(config)))
+
+
+def test_schema_rejects_what_loader_rejects():
+    bad_configs = [
+        {"mesages": [], "name": "x"},                       # typo'd key
+        {"name": "x", "messages": [{"role": "user"}]},      # no template/content
+        {"name": "x", "messages": [
+            {"role": "user", "template": "a", "content": "b"}  # both bodies
+        ]},
+        {"name": "x", "output": {"urgency": "strang"}, "system": "s"},  # bad type
+        {"messages": [{"role": "user", "content": "hi"}]},  # missing name
+    ]
+    for config in bad_configs:
+        assert not _validates(config), f"schema wrongly accepted: {config}"
+        with pytest.raises(Exception):
+            load_prompt(json.loads(json.dumps(config)))
+
+
+def test_schema_file_ships_with_package():
+    from model_message.prompts import PROMPT_CONFIG_SCHEMA_PATH
+
+    assert PROMPT_CONFIG_SCHEMA_PATH.exists()
+    assert PROMPT_CONFIG_SCHEMA["title"] == "pai-sdk prompt config"

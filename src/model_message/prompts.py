@@ -70,6 +70,14 @@ from .typed import TYPED_MESSAGE_TYPES, extract_variables
 JSON_EXTENSIONS = (".json",)
 YAML_EXTENSIONS = (".yaml", ".yml")
 
+# JSON Schema for the prompt-config file format itself — point editors at it
+# (yaml-language-server: $schema=<path or URL>) to validate/autocomplete
+# prompt files. PROMPT_CONFIG_SCHEMA is the parsed dict.
+PROMPT_CONFIG_SCHEMA_PATH = Path(__file__).parent / "prompt-config.schema.json"
+PROMPT_CONFIG_SCHEMA: dict[str, Any] = json.loads(
+    PROMPT_CONFIG_SCHEMA_PATH.read_text()
+)
+
 
 class PromptError(AISDKError):
     """Invalid prompt config or disallowed prompt mutation."""
