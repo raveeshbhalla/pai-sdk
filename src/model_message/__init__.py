@@ -95,8 +95,11 @@ from .pricing import (
     CostEstimate,
     ModelPricing,
     NoPricingError,
+    PRICING_SOURCES,
     estimate_cost,
     get_pricing,
+    parse_pricing_data,
+    refresh_pricing,
     register_pricing,
 )
 from .output import (
@@ -301,4 +304,7 @@ __all__ = [
     "ModelPricing",
     "CostEstimate",
     "NoPricingError",
+    "refresh_pricing",
+    "parse_pricing_data",
+    "PRICING_SOURCES",
 ]

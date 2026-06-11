@@ -128,6 +128,195 @@ def register_pricing(model_id: str, pricing: ModelPricing) -> None:
     _registry[model_id] = pricing
 
 
+# ---------------------------------------------------------------------------
+# Server-hosted pricing sources
+# ---------------------------------------------------------------------------
+
+# Well-known public sources (no auth required):
+PRICING_SOURCES = {
+    # LiteLLM's community-maintained table — the de-facto standard; covers
+    # nearly every model with input/output/cache rates (per token).
+    "litellm": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+    # OpenRouter's public models API — per-token string prices per slug.
+    "openrouter": "https://openrouter.ai/api/v1/models",
+    # models.dev open catalog — per-1M prices nested per provider.
+    "models.dev": "https://models.dev/api.json",
+}
+
+
+def _per_token(value) -> Optional[float]:
+    """Per-token price (number or string) -> per-1M-tokens float."""
+    if value is None:
+        return None
+    try:
+        return float(value) * _MILLION
+    except (TypeError, ValueError):
+        return None
+
+
+def _register_with_bare_alias(
+    table: dict[str, ModelPricing], key: str, pricing: ModelPricing
+) -> None:
+    """Register under the full key; also alias the bare model id (the part
+    after the last '/') without clobbering an existing exact entry."""
+    table[key] = pricing
+    if "/" in key:
+        table.setdefault(key.rsplit("/", 1)[1], pricing)
+
+
+def parse_pricing_data(data, format: str) -> dict[str, ModelPricing]:
+    """Parse a pricing payload into {model_id: ModelPricing}.
+
+    Formats:
+    - "litellm": {model_id: {input_cost_per_token, output_cost_per_token,
+      cache_read_input_token_cost?, cache_creation_input_token_cost?}}
+    - "openrouter": {"data": [{"id": slug, "pricing": {"prompt", "completion",
+      "input_cache_read"?, "input_cache_write"?}}]} (per-token strings)
+    - "models.dev": {provider: {"models": {id: {"cost": {input, output,
+      cache_read?, cache_write?}}}}} (per 1M tokens)
+    - "simple": {model_id: {"input": per_1M, "output": per_1M,
+      "cache_read"?: per_1M, "cache_write"?: per_1M}} — the schema to use
+      for your own hosted table.
+    """
+    parsed: dict[str, ModelPricing] = {}
+
+    if format == "litellm":
+        for key, entry in data.items():
+            if not isinstance(entry, dict):
+                continue
+            input_rate = _per_token(entry.get("input_cost_per_token"))
+            output_rate = _per_token(entry.get("output_cost_per_token"))
+            if input_rate is None or output_rate is None:
+                continue
+            _register_with_bare_alias(
+                parsed,
+                key,
+                ModelPricing(
+                    input=input_rate,
+                    output=output_rate,
+                    cache_read=_per_token(entry.get("cache_read_input_token_cost")),
+                    cache_write=_per_token(entry.get("cache_creation_input_token_cost")),
+                ),
+            )
+
+    elif format == "openrouter":
+        for entry in data.get("data", []):
+            slug = entry.get("id")
+            rates = entry.get("pricing") or {}
+            input_rate = _per_token(rates.get("prompt"))
+            output_rate = _per_token(rates.get("completion"))
+            if not slug or input_rate is None or output_rate is None:
+                continue
+            _register_with_bare_alias(
+                parsed,
+                slug,
+                ModelPricing(
+                    input=input_rate,
+                    output=output_rate,
+                    cache_read=_per_token(rates.get("input_cache_read")),
+                    cache_write=_per_token(rates.get("input_cache_write")),
+                ),
+            )
+
+    elif format == "models.dev":
+        for provider_entry in data.values():
+            models = (provider_entry or {}).get("models")
+            if not isinstance(models, dict):
+                continue
+            for model_id, model_entry in models.items():
+                cost = (model_entry or {}).get("cost") or {}
+                if cost.get("input") is None or cost.get("output") is None:
+                    continue
+                parsed.setdefault(
+                    model_id,
+                    ModelPricing(
+                        input=float(cost["input"]),
+                        output=float(cost["output"]),
+                        cache_read=(
+                            float(cost["cache_read"])
+                            if cost.get("cache_read") is not None
+                            else None
+                        ),
+                        cache_write=(
+                            float(cost["cache_write"])
+                            if cost.get("cache_write") is not None
+                            else None
+                        ),
+                    ),
+                )
+
+    elif format == "simple":
+        for model_id, entry in data.items():
+            if not isinstance(entry, dict) or "input" not in entry or "output" not in entry:
+                continue
+            _register_with_bare_alias(
+                parsed,
+                model_id,
+                ModelPricing(
+                    input=float(entry["input"]),
+                    output=float(entry["output"]),
+                    cache_read=(
+                        float(entry["cache_read"])
+                        if entry.get("cache_read") is not None
+                        else None
+                    ),
+                    cache_write=(
+                        float(entry["cache_write"])
+                        if entry.get("cache_write") is not None
+                        else None
+                    ),
+                ),
+            )
+
+    else:
+        raise ValueError(
+            f"Unknown pricing format '{format}'. "
+            "Expected one of: litellm, openrouter, models.dev, simple."
+        )
+
+    return parsed
+
+
+async def refresh_pricing(
+    source: str = "litellm",
+    *,
+    format: Optional[str] = None,
+    headers: Optional[dict[str, str]] = None,
+    timeout: float = 30.0,
+) -> int:
+    """Fetch a server-hosted pricing table and merge it into the registry
+    (fetched entries override built-ins; built-ins remain for models the
+    source lacks). Returns the number of models loaded.
+
+        await refresh_pricing()                       # LiteLLM community table
+        await refresh_pricing("openrouter")           # OpenRouter models API
+        await refresh_pricing("https://prices.my.co/models.json",
+                              format="simple")        # your own hosted table
+
+    `source` is a well-known name (litellm / openrouter / models.dev) or any
+    URL; `format` defaults to the well-known name, and is required ("simple",
+    or one of the named formats) for custom URLs.
+    """
+    import httpx
+
+    url = PRICING_SOURCES.get(source, source)
+    resolved_format = format or (source if source in PRICING_SOURCES else None)
+    if resolved_format is None:
+        raise ValueError(
+            "Pass format= ('simple', 'litellm', 'openrouter', or 'models.dev') "
+            "when refreshing from a custom URL."
+        )
+
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+    parsed = parse_pricing_data(data, resolved_format)
+    _registry.update(parsed)
+    return len(parsed)
+
+
 def get_pricing(model_id: str) -> Optional[ModelPricing]:
     """Look up pricing: exact id first, then the longest registered key that
     is a substring of the id (handles 'anthropic.claude-haiku-4-5' on Bedrock,

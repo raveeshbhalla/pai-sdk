@@ -386,10 +386,22 @@ register_pricing("my-finetune", ModelPricing(input=2.0, output=8.0))
 
 Built-in prices are dated estimates (`pricing.PRICING_AS_OF`) for common
 Anthropic/OpenAI/Gemini models with substring lookup (Bedrock prefixes and
-dated snapshots resolve); override with `register_pricing` or pass
-`pricing=` for billing-grade numbers. OpenRouter returns authoritative cost
-directly in `result.provider_metadata["openrouter"]["cost"]` — prefer that
-when available.
+dated snapshots resolve). For fresh, broad coverage, pull a server-hosted
+table at startup — entries merge over (and override) the built-ins:
+
+```python
+await refresh_pricing()                  # LiteLLM community table (default)
+await refresh_pricing("openrouter")      # OpenRouter models API (no key)
+await refresh_pricing("models.dev")      # models.dev catalog
+await refresh_pricing("https://prices.internal/models.json", format="simple")
+```
+
+The "simple" format for self-hosted tables is
+`{model_id: {"input": per_1M, "output": per_1M, "cache_read"?, "cache_write"?}}`.
+Or override individual models with `register_pricing` / pass `pricing=`.
+OpenRouter returns authoritative cost directly in
+`result.provider_metadata["openrouter"]["cost"]` — prefer that when available.
+Azure deployments have arbitrary names, so register pricing per deployment.
 
 ## Not (yet) implemented
 

@@ -107,3 +107,108 @@ def test_currency_mismatch_rejected():
 def test_requires_model_or_pricing():
     with pytest.raises(ValueError):
         estimate_cost(Usage(input_tokens=1))
+
+
+# ---------------------------------------------------------------------------
+# Server-hosted pricing sources
+# ---------------------------------------------------------------------------
+
+from model_message.pricing import parse_pricing_data  # noqa: E402
+
+
+def test_parse_litellm_format():
+    parsed = parse_pricing_data(
+        {
+            "claude-haiku-4-5": {
+                "input_cost_per_token": 1e-06,
+                "output_cost_per_token": 5e-06,
+                "cache_read_input_token_cost": 1e-07,
+                "cache_creation_input_token_cost": 1.25e-06,
+            },
+            "gemini/gemini-2.5-flash": {
+                "input_cost_per_token": 3e-07,
+                "output_cost_per_token": 2.5e-06,
+            },
+            "sample_spec": {"notes": "not a model"},
+        },
+        "litellm",
+    )
+    haiku = parsed["claude-haiku-4-5"]
+    assert haiku.input == pytest.approx(1.0)
+    assert haiku.output == pytest.approx(5.0)
+    assert haiku.cache_read == pytest.approx(0.1)
+    assert haiku.cache_write == pytest.approx(1.25)
+    # provider-prefixed key registered with a bare alias
+    assert parsed["gemini-2.5-flash"].input == pytest.approx(0.30)
+    assert "sample_spec" not in parsed
+
+
+def test_parse_openrouter_format():
+    parsed = parse_pricing_data(
+        {
+            "data": [
+                {
+                    "id": "anthropic/claude-haiku-4.5",
+                    "pricing": {
+                        "prompt": "0.000001",
+                        "completion": "0.000005",
+                        "input_cache_read": "0.0000001",
+                        "input_cache_write": "0.00000125",
+                        "web_search": "0.01",
+                    },
+                },
+                {"id": "broken/no-pricing", "pricing": {}},
+            ]
+        },
+        "openrouter",
+    )
+    slug = parsed["anthropic/claude-haiku-4.5"]
+    assert slug.input == pytest.approx(1.0)
+    assert slug.cache_write == pytest.approx(1.25)
+    assert parsed["claude-haiku-4.5"].output == pytest.approx(5.0)  # bare alias
+    assert "broken/no-pricing" not in parsed
+
+
+def test_parse_models_dev_and_simple_formats():
+    parsed = parse_pricing_data(
+        {
+            "anthropic": {
+                "models": {
+                    "claude-haiku-4-5": {
+                        "cost": {"input": 1.0, "output": 5.0, "cache_read": 0.1}
+                    }
+                }
+            }
+        },
+        "models.dev",
+    )
+    assert parsed["claude-haiku-4-5"].cache_read == pytest.approx(0.1)
+
+    parsed = parse_pricing_data(
+        {"acme/my-model": {"input": 2.0, "output": 8.0, "cache_write": 2.5}},
+        "simple",
+    )
+    assert parsed["acme/my-model"].cache_write == pytest.approx(2.5)
+    assert parsed["my-model"].input == pytest.approx(2.0)
+
+
+def test_parse_unknown_format_rejected():
+    with pytest.raises(ValueError):
+        parse_pricing_data({}, "nope")
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("source", ["litellm", "openrouter"])
+async def test_refresh_pricing_live(source):
+    import httpx
+
+    from model_message.pricing import get_pricing, refresh_pricing
+
+    try:
+        count = await refresh_pricing(source)
+    except (httpx.HTTPError, OSError) as exc:
+        pytest.skip(f"pricing source unreachable: {exc}")
+    assert count > 100
+    # a model we use must now be priced from the live source
+    assert get_pricing("gpt-5.4-mini") is not None
+    assert get_pricing("claude-haiku-4-5") is not None
