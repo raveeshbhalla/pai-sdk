@@ -366,6 +366,31 @@ text = dump_messages_json([*messages, *result.response.messages])
 history = load_messages(text)   # ready to re-send
 ```
 
+## Cost estimates
+
+Adapters normalize every provider's cache/reasoning token accounting into
+`usage.input_token_details` / `usage.output_token_details`, so one formula
+prices all of them — uncached input, cache reads, cache writes, and
+text+reasoning output each at their own rate:
+
+```python
+from model_message import estimate_cost, register_pricing, ModelPricing
+
+result = await generate_text(model=anthropic("claude-haiku-4-5"), ...)
+cost = estimate_cost(result.total_usage, model="claude-haiku-4-5")
+print(cost.total, cost.cache_read_cost, cost.output_cost)
+
+monthly = sum(costs, start=first_cost)        # CostEstimate supports +
+register_pricing("my-finetune", ModelPricing(input=2.0, output=8.0))
+```
+
+Built-in prices are dated estimates (`pricing.PRICING_AS_OF`) for common
+Anthropic/OpenAI/Gemini models with substring lookup (Bedrock prefixes and
+dated snapshots resolve); override with `register_pricing` or pass
+`pricing=` for billing-grade numbers. OpenRouter returns authoritative cost
+directly in `result.provider_metadata["openrouter"]["cost"]` — prefer that
+when available.
+
 ## Not (yet) implemented
 
 MCP tool loading, image/speech/transcription models, telemetry, and the

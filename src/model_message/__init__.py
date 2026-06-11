@@ -91,6 +91,14 @@ from .middleware import (
     simulate_streaming_middleware,
     wrap_language_model,
 )
+from .pricing import (
+    CostEstimate,
+    ModelPricing,
+    NoPricingError,
+    estimate_cost,
+    get_pricing,
+    register_pricing,
+)
 from .output import (
     GenerateObjectResult,
     Output,
@@ -286,4 +294,11 @@ __all__ = [
     "MissingDependencyError",
     "AbortError",
     "GenerationTimeoutError",
+    # pricing
+    "estimate_cost",
+    "get_pricing",
+    "register_pricing",
+    "ModelPricing",
+    "CostEstimate",
+    "NoPricingError",
 ]
