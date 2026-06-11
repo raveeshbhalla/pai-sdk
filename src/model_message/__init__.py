@@ -13,8 +13,10 @@ for Python, with OpenAI, Anthropic, Google Gemini, and OpenRouter providers.
 
 from .agent import Agent
 from .errors import (
+    AbortError,
     AISDKError,
     APICallError,
+    GenerationTimeoutError,
     InvalidPromptError,
     InvalidToolInputError,
     MissingDependencyError,
@@ -23,6 +25,9 @@ from .errors import (
     NoSuchToolError,
 )
 from .generate import (
+    PrepareStepFn,
+    PrepareStepResult,
+    RepairToolCallFn,
     StreamTextResult,
     generate_id,
     generate_text,
@@ -92,6 +97,7 @@ from .results import (
     Usage,
 )
 from .stream import (
+    AbortPart,
     ErrorPart,
     Finish,
     FinishStep,
@@ -115,8 +121,9 @@ from .stream import (
     ToolResultEvent,
 )
 from .tools import Tool, ToolCallOptions, ToolSet, tool
+from .transforms import Transform, compose_transforms, smooth_stream
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # core functions
@@ -130,6 +137,12 @@ __all__ = [
     "Output",
     "parse_partial_json",
     "Agent",
+    "PrepareStepResult",
+    "PrepareStepFn",
+    "RepairToolCallFn",
+    "Transform",
+    "smooth_stream",
+    "compose_transforms",
     "tool",
     "Tool",
     "ToolSet",
@@ -209,6 +222,7 @@ __all__ = [
     "Finish",
     "ErrorPart",
     "RawPart",
+    "AbortPart",
     # provider interface
     "LanguageModel",
     "CallOptions",
@@ -223,4 +237,6 @@ __all__ = [
     "InvalidPromptError",
     "NoSuchProviderError",
     "MissingDependencyError",
+    "AbortError",
+    "GenerationTimeoutError",
 ]

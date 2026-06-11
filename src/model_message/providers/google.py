@@ -4,11 +4,19 @@ Notes:
 - System messages map to config.system_instruction.
 - http(s) image/file URLs are downloaded (Gemini only takes inline bytes or
   Files API URIs); Files API URIs can be passed via FilePart with
-  provider_options={"google": {"file_uri": ...}}.
+  provider_options={"google": {"file_uri": ...}} or via FileIdData.
 - Gemini 3 thought signatures are preserved in
   provider_options["google"]["thought_signature"] and echoed on replay.
 - providerOptions under the "google" key are merged into the generation
   config (e.g. {"google": {"thinking_config": {"thinking_level": "high"}}}).
+- When grounding is enabled, grounding chunks with web URIs are mapped to
+  UrlSourcePart entries appended to content (and SourceStreamPart in
+  streaming). Sources are deduped by URI in streaming.
+- ProviderResult.request / ResponseMetadataPart.request echo the JSON-able
+  request (model/contents/config); bytes in contents are summarized as
+  "<bytes>" placeholders to keep it JSON-serializable.
+- When options.include_raw_chunks is True, a RawPart(raw_value=chunk.model_dump())
+  is yielded for each raw stream chunk in addition to mapped parts.
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ from ..messages import (
     ErrorJsonOutput,
     ErrorTextOutput,
     FilePart,
+    FileIdData,
     ImagePart,
     JsonOutput,
     ModelMessage,
@@ -36,18 +45,21 @@ from ..messages import (
     ToolCallPart,
     ToolModelMessage,
     ToolResultPart,
+    UrlSourcePart,
     UserModelMessage,
 )
 from ..provider import CallOptions, LanguageModel, ProviderResult
-from ..results import FinishReason, ResponseMetadata, Usage
+from ..results import FinishReason, InputTokenDetails, OutputTokenDetails, ResponseMetadata, Usage
 from ..stream import (
     Finish,
     FilePartEvent,
     ProviderStreamPart,
+    RawPart,
     ReasoningDelta,
     ReasoningEnd,
     ReasoningStart,
     ResponseMetadataPart,
+    SourceStreamPart,
     TextDelta,
     TextEnd,
     TextStart,
@@ -81,7 +93,25 @@ async def _download(url: str) -> tuple[bytes, Optional[str]]:
         return response.content, response.headers.get("content-type")
 
 
+def _file_uri_from_file_id(file_id_data: FileIdData) -> str:
+    """Extract the file URI string from a FileIdData instance."""
+    id_val = file_id_data.id
+    if isinstance(id_val, str):
+        return id_val
+    # dict variant: look for "file_uri" key, else take the sole value
+    if isinstance(id_val, dict):
+        if "file_uri" in id_val:
+            return id_val["file_uri"]
+        if id_val:
+            return next(iter(id_val.values()))
+    return str(id_val)
+
+
 async def _media_part(data: Any, media_type: Optional[str], provider_options) -> dict[str, Any]:
+    # FileIdData: map to file_data (Files API / GCS URI reference)
+    if isinstance(data, FileIdData):
+        file_uri = _file_uri_from_file_id(data)
+        return {"file_data": {"file_uri": file_uri, "mime_type": media_type}}
     file_uri = ((provider_options or {}).get("google") or {}).get("file_uri")
     if file_uri:
         return {"file_data": {"file_uri": file_uri, "mime_type": media_type}}
@@ -195,13 +225,135 @@ async def convert_to_gemini_contents(
 def _map_usage(metadata: Any) -> Usage:
     if metadata is None:
         return Usage()
+    prompt = getattr(metadata, "prompt_token_count", None)
+    cached = getattr(metadata, "cached_content_token_count", None)
+    thoughts = getattr(metadata, "thoughts_token_count", None)
+    candidates = getattr(metadata, "candidates_token_count", None)
+
+    # input_token_details: cache_read=cached, no_cache=prompt-cached (when both present)
+    input_details: Optional[InputTokenDetails] = None
+    if cached is not None or prompt is not None:
+        no_cache: Optional[int] = None
+        if prompt is not None and cached is not None:
+            no_cache = prompt - cached
+        input_details = InputTokenDetails(
+            cache_read_tokens=cached,
+            no_cache_tokens=no_cache,
+        )
+
+    # output_token_details: reasoning=thoughts, text=candidates
+    output_details: Optional[OutputTokenDetails] = None
+    if thoughts is not None or candidates is not None:
+        output_details = OutputTokenDetails(
+            reasoning_tokens=thoughts,
+            text_tokens=candidates,
+        )
+
     return Usage(
-        input_tokens=getattr(metadata, "prompt_token_count", None),
-        output_tokens=getattr(metadata, "candidates_token_count", None),
+        input_tokens=prompt,
+        output_tokens=candidates,
         total_tokens=getattr(metadata, "total_token_count", None),
-        reasoning_tokens=getattr(metadata, "thoughts_token_count", None),
-        cached_input_tokens=getattr(metadata, "cached_content_token_count", None),
+        reasoning_tokens=thoughts,
+        cached_input_tokens=cached,
+        input_token_details=input_details,
+        output_token_details=output_details,
     )
+
+
+def _grounding_sources(candidate: Any) -> list[UrlSourcePart]:
+    """Extract UrlSourcePart entries from grounding_metadata.grounding_chunks.
+
+    Only chunks with a non-empty web.uri are included. Deduplication by URI
+    is left to the caller (streaming) or omitted (generate, where the full
+    list is already deduplicated by the response).
+
+    SDK verified fields:
+    - candidate.grounding_metadata: GroundingMetadata | None
+    - GroundingMetadata.grounding_chunks: list[GroundingChunk] | None
+    - GroundingChunk.web: GroundingChunkWeb | None
+    - GroundingChunkWeb.uri: str | None
+    - GroundingChunkWeb.title: str | None
+    """
+    grounding_metadata = getattr(candidate, "grounding_metadata", None)
+    if grounding_metadata is None:
+        return []
+    chunks = getattr(grounding_metadata, "grounding_chunks", None) or []
+    sources: list[UrlSourcePart] = []
+    for idx, chunk in enumerate(chunks):
+        web = getattr(chunk, "web", None)
+        if web is None:
+            continue
+        uri = getattr(web, "uri", None)
+        if not uri:
+            continue
+        title = getattr(web, "title", None)
+        sources.append(
+            UrlSourcePart(id=f"source_{idx}", url=uri, title=title)
+        )
+    return sources
+
+
+def _sanitize_contents_for_request(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a JSON-able copy of contents with raw bytes replaced by '<bytes>'."""
+    result = []
+    for content in contents:
+        sanitized_parts = []
+        for part in content.get("parts", []):
+            if "inline_data" in part:
+                inline = dict(part["inline_data"])
+                if isinstance(inline.get("data"), bytes):
+                    inline["data"] = "<bytes>"
+                sanitized_parts.append({"inline_data": inline})
+            else:
+                sanitized_parts.append(part)
+        result.append({**content, "parts": sanitized_parts})
+    return result
+
+
+def _build_request_echo(model_id: str, contents: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:
+    """Build the JSON-able request dict to echo back on results."""
+    return {
+        "model": model_id,
+        "contents": _sanitize_contents_for_request(contents),
+        "config": config,
+    }
+
+
+def _build_provider_metadata(candidate: Any) -> Optional[dict[str, dict[str, Any]]]:
+    """Build provider_metadata['google'] from a response candidate, defensively."""
+    meta: dict[str, Any] = {}
+
+    finish_message = getattr(candidate, "finish_message", None)
+    if finish_message is not None:
+        meta["finish_message"] = finish_message
+
+    grounding_metadata = getattr(candidate, "grounding_metadata", None)
+    if grounding_metadata is not None:
+        try:
+            # Keep it small: only web_search_queries and grounding_chunk count
+            summary: dict[str, Any] = {}
+            chunks = getattr(grounding_metadata, "grounding_chunks", None)
+            if chunks is not None:
+                summary["grounding_chunk_count"] = len(chunks)
+            web_queries = getattr(grounding_metadata, "web_search_queries", None)
+            if web_queries:
+                summary["web_search_queries"] = web_queries
+            meta["grounding_metadata"] = summary
+        except Exception:  # noqa: BLE001
+            pass
+
+    safety_ratings = getattr(candidate, "safety_ratings", None)
+    if safety_ratings is not None:
+        try:
+            meta["safety_ratings"] = [
+                r.model_dump(exclude_none=True) for r in safety_ratings
+            ]
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not meta:
+        return None
+    return {"google": meta}
 
 
 def _finish_name(finish_reason: Any) -> Optional[str]:
@@ -238,6 +390,32 @@ class GoogleLanguageModel(LanguageModel):
             kwargs["api_key"] = self.api_key
         self._client_cache = genai.Client(**kwargs)
         return self._client_cache
+
+    def _compute_warnings(self, options: CallOptions) -> list[Any]:
+        """Return CallWarning list for anything we cannot honour.
+
+        Currently: a tool_choice dict naming a tool that is not in tools
+        (type="other", because the setting itself is valid — the name is wrong).
+        All other CallOptions fields are mapped to Gemini config in _build.
+        """
+        from ..results import CallWarning
+
+        warnings: list[Any] = []
+        choice = options.tool_choice
+        if isinstance(choice, dict):
+            tool_name = choice.get("tool_name") or choice.get("toolName")
+            tool_names = {spec.name for spec in (options.tools or [])}
+            if tool_name and tool_names and tool_name not in tool_names:
+                warnings.append(
+                    CallWarning(
+                        type="other",
+                        message=(
+                            f"tool_choice names '{tool_name}' but it is not in the tools list. "
+                            f"Gemini will use ANY mode over all available tools."
+                        ),
+                    )
+                )
+        return warnings
 
     async def _build(self, options: CallOptions) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         from ._util import system_and_rest
@@ -341,6 +519,8 @@ class GoogleLanguageModel(LanguageModel):
     async def do_generate(self, options: CallOptions) -> ProviderResult:
         client = self._client()
         contents, config = await self._build(options)
+        warnings = self._compute_warnings(options)
+        request_echo = _build_request_echo(self.model_id, contents, config)
         try:
             response = await client.aio.models.generate_content(
                 model=self.model_id, contents=contents, config=config or None
@@ -349,14 +529,24 @@ class GoogleLanguageModel(LanguageModel):
             raise wrap_provider_error(exc, "Google") from exc
 
         candidates = getattr(response, "candidates", None) or []
+        candidate = candidates[0] if candidates else None
         content: list[AssistantContentPart] = (
-            self._content_parts(candidates[0]) if candidates else []
+            self._content_parts(candidate) if candidate is not None else []
         )
-        raw_finish = _finish_name(candidates[0].finish_reason) if candidates else None
+
+        # Append grounding sources to content
+        if candidate is not None:
+            sources = _grounding_sources(candidate)
+            content.extend(sources)
+
+        raw_finish = _finish_name(candidate.finish_reason) if candidate is not None else None
         has_tool_calls = any(isinstance(p, ToolCallPart) for p in content)
         finish = _FINISH_REASONS.get(raw_finish or "", "unknown")
         if finish == "stop" and has_tool_calls:
             finish = "tool-calls"
+
+        provider_metadata = _build_provider_metadata(candidate) if candidate is not None else None
+
         return ProviderResult(
             content=content,
             finish_reason=finish,
@@ -366,6 +556,9 @@ class GoogleLanguageModel(LanguageModel):
                 id=getattr(response, "response_id", None),
                 model_id=getattr(response, "model_version", None) or self.model_id,
             ),
+            warnings=warnings,
+            provider_metadata=provider_metadata,
+            request=request_echo,
         )
 
     async def do_stream(
@@ -373,6 +566,8 @@ class GoogleLanguageModel(LanguageModel):
     ) -> AsyncIterator[ProviderStreamPart]:
         client = self._client()
         contents, config = await self._build(options)
+        warnings = self._compute_warnings(options)
+        request_echo = _build_request_echo(self.model_id, contents, config)
         try:
             stream = await client.aio.models.generate_content_stream(
                 model=self.model_id, contents=contents, config=config or None
@@ -386,14 +581,25 @@ class GoogleLanguageModel(LanguageModel):
         sent_metadata = False
         text_open = False
         reasoning_open = False
+        # Track URIs of sources already emitted to deduplicate across chunks
+        seen_source_uris: set[str] = set()
+        last_candidate: Any = None
 
         try:
             async for chunk in stream:
+                # Emit raw chunk if requested (before any processing)
+                if options.include_raw_chunks:
+                    try:
+                        yield RawPart(raw_value=chunk.model_dump())
+                    except Exception:  # noqa: BLE001
+                        yield RawPart(raw_value=None)
+
                 if not sent_metadata:
                     sent_metadata = True
                     yield ResponseMetadataPart(
                         id=getattr(chunk, "response_id", None),
                         model_id=getattr(chunk, "model_version", None) or self.model_id,
+                        request=request_echo,
                     )
                 if getattr(chunk, "usage_metadata", None) is not None:
                     usage = _map_usage(chunk.usage_metadata)
@@ -401,6 +607,7 @@ class GoogleLanguageModel(LanguageModel):
                 if not candidates:
                     continue
                 candidate = candidates[0]
+                last_candidate = candidate
                 for part in self._content_parts(candidate):
                     if isinstance(part, ReasoningPart):
                         if not reasoning_open:
@@ -426,6 +633,13 @@ class GoogleLanguageModel(LanguageModel):
                         yield FilePartEvent(
                             media_type=part.media_type, data=to_bytes(part.data)
                         )
+
+                # Emit new grounding sources (deduped by URI)
+                for source in _grounding_sources(candidate):
+                    if source.url not in seen_source_uris:
+                        seen_source_uris.add(source.url)
+                        yield SourceStreamPart(source=source)
+
                 if candidate.finish_reason is not None:
                     raw_finish = _finish_name(candidate.finish_reason)
         except Exception as exc:  # noqa: BLE001

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
+from dataclasses import dataclass, field
 from typing import (
     Any,
     AsyncIterator,
@@ -15,7 +17,13 @@ from typing import (
 )
 
 from ._prompt import Prompt, standardize_prompt
-from .errors import APICallError
+from .errors import (
+    AbortError,
+    APICallError,
+    GenerationTimeoutError,
+    InvalidToolInputError,
+    NoSuchToolError,
+)
 from .messages import (
     AssistantContentPart,
     AssistantModelMessage,
@@ -44,6 +52,7 @@ from .results import (
     coerce_warnings,
 )
 from .stream import (
+    AbortPart,
     ErrorPart,
     Finish,
     FinishStep,
@@ -69,6 +78,7 @@ from .stream import (
 
 _SOURCE_TYPES = (UrlSourcePart, DocumentSourcePart)
 from .tools import Tool, ToolCallOptions, ToolSet, output_to_model_output
+from .transforms import Transform, compose_transforms
 
 # ---------------------------------------------------------------------------
 # Stop conditions (AI SDK stopWhen)
@@ -110,6 +120,232 @@ async def _is_stopped(
 
 
 # ---------------------------------------------------------------------------
+# Loop control: prepare_step, repair, abort, timeouts (AI SDK parity)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PrepareStepResult:
+    """Per-step overrides returned by a `prepare_step` callback (AI SDK
+    prepareStep). Any field left None keeps the loop's current value. All
+    overrides are per-step only and do not mutate canonical loop state, except
+    `messages`, which fully replaces the working message list for that step.
+    """
+
+    model: Optional[Union[str, "LanguageModel"]] = None
+    tools: Optional[ToolSet] = None
+    active_tools: Optional[Sequence[str]] = None
+    tool_choice: Optional[ToolChoice] = None
+    system: Optional[str] = None
+    messages: Optional[Sequence[ModelMessage]] = None
+
+
+# prepare_step signature: called before each step (sync or async).
+PrepareStepFn = Callable[..., Union[Optional[PrepareStepResult], Awaitable[Optional[PrepareStepResult]]]]
+
+# repair_tool_call signature (sync or async) -> fixed ToolCallPart or None.
+RepairToolCallFn = Callable[..., Union[Optional[ToolCallPart], Awaitable[Optional[ToolCallPart]]]]
+
+
+async def _maybe_await(value: Any) -> Any:
+    if asyncio.iscoroutine(value):
+        return await value
+    return value
+
+
+def _normalize_messages(messages: Sequence[Any]) -> list[ModelMessage]:
+    """Coerce a prepare_step `messages` override (ModelMessage instances or
+    plain dicts) into a list of ModelMessage, mirroring standardize_prompt."""
+    from ._prompt import _MESSAGE_TYPES
+    from .messages import model_message_adapter
+
+    out: list[ModelMessage] = []
+    for item in messages:
+        if isinstance(item, _MESSAGE_TYPES):
+            out.append(item)
+        else:
+            out.append(model_message_adapter.validate_python(item))
+    return out
+
+
+async def _call_prepare_step(
+    prepare_step: Optional[PrepareStepFn],
+    *,
+    model: LanguageModel,
+    step_number: int,
+    steps: list[StepResult],
+    messages: list[ModelMessage],
+) -> Optional[PrepareStepResult]:
+    if prepare_step is None:
+        return None
+    result = prepare_step(
+        model=model,
+        step_number=step_number,
+        steps=steps,
+        messages=messages,
+    )
+    return await _maybe_await(result)
+
+
+@dataclass
+class _StepConfig:
+    """Effective per-step configuration after applying prepare_step overrides."""
+
+    model: LanguageModel
+    tools: Optional[ToolSet]
+    specs: list[FunctionToolSpec]
+    tool_choice: Optional[ToolChoice]
+    messages: list[ModelMessage]
+
+
+def _resolve_step_config(
+    prep: Optional[PrepareStepResult],
+    *,
+    base_model: LanguageModel,
+    base_tools: Optional[ToolSet],
+    base_active_tools: Optional[Sequence[str]],
+    base_tool_choice: Optional[ToolChoice],
+    working_messages: list[ModelMessage],
+) -> _StepConfig:
+    """Apply a PrepareStepResult to derive the effective per-step config.
+
+    model/tools/tool_choice/active_tools are per-step only; `messages` and
+    `system` build the working message list for this step only (subsequent
+    steps resume from canonical history)."""
+    model = base_model
+    tools = base_tools
+    active_tools = base_active_tools
+    tool_choice = base_tool_choice
+    messages = working_messages
+
+    if prep is not None:
+        if prep.model is not None:
+            model = _resolve_model(prep.model)
+        if prep.tools is not None:
+            tools = prep.tools
+            active_tools = None  # a replacement tool set ignores the base filter
+        if prep.active_tools is not None:
+            active_tools = prep.active_tools
+        if prep.tool_choice is not None:
+            tool_choice = prep.tool_choice
+        if prep.messages is not None:
+            messages = _normalize_messages(prep.messages)
+        if prep.system is not None:
+            # Replace any leading system messages for this step only.
+            from .messages import SystemModelMessage
+
+            rest = [m for m in messages if not isinstance(m, SystemModelMessage)]
+            messages = [SystemModelMessage(content=prep.system), *rest]
+
+    specs = _tool_specs(tools, active_tools)
+    return _StepConfig(
+        model=model,
+        tools=tools,
+        specs=specs,
+        tool_choice=tool_choice,
+        messages=list(messages),
+    )
+
+
+async def _repair_tool_calls(
+    content: list[AssistantContentPart],
+    tool_calls: list[ToolCallPart],
+    tools: Optional[ToolSet],
+    repair_tool_call: Optional[RepairToolCallFn],
+    messages: list[ModelMessage],
+) -> list[ToolCallPart]:
+    """For each tool call, detect NoSuchToolError / InvalidToolInputError during
+    prep. If `repair_tool_call` is configured, attempt a single repair and
+    replace the call in `content` and the returned list so history stays
+    consistent. Returns the (possibly repaired) list of tool calls.
+
+    When `repair_tool_call` is None, this is a no-op (unknown tools and invalid
+    inputs flow to the normal error-result path)."""
+    if repair_tool_call is None or not tools:
+        return tool_calls
+
+    available = list(tools.keys())
+    repaired: list[ToolCallPart] = []
+    for call in tool_calls:
+        if call.provider_executed:
+            repaired.append(call)
+            continue
+
+        error: Optional[Exception] = None
+        tool_def = tools.get(call.tool_name)
+        if tool_def is None:
+            error = NoSuchToolError(call.tool_name, available)
+        else:
+            try:
+                tool_def.parse_input(call.input)
+            except InvalidToolInputError as exc:
+                error = exc
+
+        if error is None:
+            repaired.append(call)
+            continue
+
+        fixed = await _maybe_await(
+            repair_tool_call(
+                tool_call=call,
+                tools=tools,
+                error=error,
+                messages=messages,
+            )
+        )
+        if fixed is None:
+            repaired.append(call)  # fall back to error-result behavior
+            continue
+
+        # Replace the call in assistant content so history is consistent.
+        for i, p in enumerate(content):
+            if p is call:
+                content[i] = fixed
+                break
+        repaired.append(fixed)
+
+    return repaired
+
+
+def _check_abort(abort_signal: Optional[asyncio.Event]) -> bool:
+    return abort_signal is not None and abort_signal.is_set()
+
+
+def _normalize_timeout(
+    timeout: Union[float, int, dict, None],
+) -> tuple[Optional[float], Optional[float]]:
+    """Return (total_seconds, step_seconds) from a float or
+    {"total_ms": int, "step_ms": int} dict (either key optional)."""
+    if timeout is None:
+        return None, None
+    if isinstance(timeout, (int, float)):
+        return float(timeout), None
+    total_ms = timeout.get("total_ms")
+    step_ms = timeout.get("step_ms")
+    total = total_ms / 1000.0 if total_ms is not None else None
+    step = step_ms / 1000.0 if step_ms is not None else None
+    return total, step
+
+
+def _step_budget(
+    step_timeout: Optional[float], total_deadline: Optional[float]
+) -> Optional[float]:
+    """Effective timeout for the next provider call: min(step, remaining total).
+    Raises GenerationTimeoutError if the total budget is already exhausted."""
+    budgets: list[float] = []
+    if step_timeout is not None:
+        budgets.append(step_timeout)
+    if total_deadline is not None:
+        remaining = total_deadline - time.monotonic()
+        if remaining <= 0:
+            raise GenerationTimeoutError("total")
+        budgets.append(remaining)
+    if not budgets:
+        return None
+    return min(budgets)
+
+
+# ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
@@ -148,17 +384,38 @@ async def _execute_tool_calls(
     tool_calls: list[ToolCallPart],
     tools: Optional[ToolSet],
     messages: list[ModelMessage],
+    *,
+    strict_unknown: bool = False,
 ) -> list[ToolResult]:
     """Run all executable tool calls concurrently. Errors become error results
-    (sent back to the model as error-text), mirroring AI SDK behavior."""
+    (sent back to the model as error-text), mirroring AI SDK behavior.
+
+    When `strict_unknown` is True (repair_tool_call configured), a call naming a
+    tool genuinely absent from the ToolSet becomes a NoSuchToolError result
+    instead of being treated as a client-side call. Tools present but without
+    `execute` remain client-side regardless."""
     if not tools:
         return []
+
+    available = list(tools.keys())
 
     async def run_one(call: ToolCallPart) -> Optional[ToolResult]:
         if call.provider_executed:
             return None  # already executed by the provider
         tool_def = tools.get(call.tool_name)
-        if tool_def is None or tool_def.execute is None:
+        if tool_def is None:
+            if strict_unknown:
+                exc = NoSuchToolError(call.tool_name, available)
+                return ToolResult(
+                    tool_call_id=call.tool_call_id,
+                    tool_name=call.tool_name,
+                    input=call.input,
+                    output=exc,
+                    model_output=ErrorTextOutput(value=str(exc)),
+                    is_error=True,
+                )
+            return None  # client-side tool: caller handles it
+        if tool_def.execute is None:
             return None  # client-side tool: caller handles it
         try:
             parsed = tool_def.parse_input(call.input)
@@ -346,6 +603,10 @@ async def generate_text(
     provider_options: Optional[dict[str, dict[str, Any]]] = None,
     output: Optional[Any] = None,
     on_step_finish: Optional[Callable[[StepResult], Any]] = None,
+    prepare_step: Optional[PrepareStepFn] = None,
+    repair_tool_call: Optional[RepairToolCallFn] = None,
+    abort_signal: Optional[asyncio.Event] = None,
+    timeout: Union[float, int, dict, None] = None,
 ) -> GenerateTextResult:
     """Generate text (and tool calls) — the AI SDK generateText().
 
@@ -354,20 +615,52 @@ async def generate_text(
 
     Pass `output=Output.object(...)` for structured output: it sets
     CallOptions.response_format and parses the final text into `result.output`.
+
+    Loop control (AI SDK parity):
+    - `prepare_step(model, step_number, steps, messages)` (sync/async) runs
+      before each step and may return a `PrepareStepResult` overriding model,
+      tools, active_tools, tool_choice, system, or messages for that step only.
+    - `repair_tool_call(tool_call, tools, error, messages)` (sync/async) is
+      invoked on NoSuchToolError / InvalidToolInputError and may return a fixed
+      ToolCallPart (retried once) or None (fall back to error result).
+    - `abort_signal` (asyncio.Event): when set, the loop stops; raises AbortError.
+    - `timeout`: float seconds (total) or {"total_ms", "step_ms"} dict.
     """
     resolved = _resolve_model(model)
     working_messages = standardize_prompt(system=system, prompt=prompt, messages=messages)
     stop = stop_when if stop_when is not None else step_count_is(1)
-    specs = _tool_specs(tools, active_tools)
     response_format = output.response_format() if output is not None else None
+    total_timeout, step_timeout = _normalize_timeout(timeout)
+    total_deadline = (
+        time.monotonic() + total_timeout if total_timeout is not None else None
+    )
 
     steps: list[StepResult] = []
     generated_messages: list[ModelMessage] = []
     total_usage = Usage()
 
     while True:
+        if _check_abort(abort_signal):
+            raise AbortError()
+
+        prep = await _call_prepare_step(
+            prepare_step,
+            model=resolved,
+            step_number=len(steps),
+            steps=steps,
+            messages=working_messages,
+        )
+        cfg = _resolve_step_config(
+            prep,
+            base_model=resolved,
+            base_tools=tools,
+            base_active_tools=active_tools,
+            base_tool_choice=tool_choice,
+            working_messages=working_messages,
+        )
+
         options = CallOptions(
-            prompt=list(working_messages),
+            prompt=cfg.messages,
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             top_p=top_p,
@@ -376,18 +669,41 @@ async def generate_text(
             frequency_penalty=frequency_penalty,
             stop_sequences=stop_sequences,
             seed=seed,
-            tools=specs,
-            tool_choice=tool_choice,
+            tools=cfg.specs,
+            tool_choice=cfg.tool_choice,
             response_format=response_format,
             headers=headers,
             provider_options=provider_options or {},
         )
-        result: ProviderResult = await _with_retry(
-            lambda: resolved.do_generate(options), max_retries
-        )
+
+        budget = _step_budget(step_timeout, total_deadline)
+
+        async def _do_call(_opts: CallOptions = options, _model: LanguageModel = cfg.model) -> ProviderResult:
+            return await _with_retry(lambda: _model.do_generate(_opts), max_retries)
+
+        try:
+            if budget is not None:
+                result: ProviderResult = await asyncio.wait_for(_do_call(), budget)
+            else:
+                result = await _do_call()
+        except asyncio.TimeoutError:
+            budget_kind = (
+                "total"
+                if total_deadline is not None and time.monotonic() >= total_deadline
+                else "step"
+            )
+            raise GenerationTimeoutError(budget_kind) from None
 
         tool_calls = [p for p in result.content if isinstance(p, ToolCallPart)]
-        tool_results = await _execute_tool_calls(tool_calls, tools, working_messages)
+        tool_calls = await _repair_tool_calls(
+            result.content, tool_calls, cfg.tools, repair_tool_call, cfg.messages
+        )
+        tool_results = await _execute_tool_calls(
+            tool_calls,
+            cfg.tools,
+            cfg.messages,
+            strict_unknown=repair_tool_call is not None,
+        )
 
         step = _build_step_result(
             content=result.content,
@@ -406,6 +722,9 @@ async def generate_text(
         new_messages = _step_messages(result.content, tool_results)
         generated_messages.extend(new_messages)
         working_messages.extend(new_messages)
+
+        if _check_abort(abort_signal):
+            raise AbortError()
 
         if on_step_finish is not None:
             cb = on_step_finish(step)
@@ -489,19 +808,29 @@ class StreamTextResult:
         on_error: Optional[Callable[[Any], Any]] = None,
         on_step_finish: Optional[Callable[[StepResult], Any]] = None,
         on_finish: Optional[Callable[["StreamTextResult"], Any]] = None,
+        on_abort: Optional[Callable[["StreamTextResult"], Any]] = None,
         output: Optional[Any] = None,
+        transform: Optional[Transform] = None,
+        abort_signal: Optional[asyncio.Event] = None,
     ) -> None:
         self._run_step_loop = run_step_loop
         self._on_chunk = on_chunk
         self._on_error = on_error
         self._on_step_finish_cb = on_step_finish
         self._on_finish = on_finish
+        self._on_abort = on_abort
         self._output = output
+        self._transform = transform
+        # The abort event the drive loop checks; .abort() also sets it. Accept a
+        # caller-supplied event so a pre-set signal aborts the run immediately.
+        self._abort_event = abort_signal if abort_signal is not None else asyncio.Event()
 
         self._parts: list[TextStreamPart] = []
         self._cond: Optional[asyncio.Condition] = None
         self._task: Optional[asyncio.Task[None]] = None
+        self._chunk_task: Optional[asyncio.Task[None]] = None
         self._error: Optional[BaseException] = None
+        self._aborted = False
 
         # Filled by the driver:
         self.steps: list[StepResult] = []
@@ -510,16 +839,49 @@ class StreamTextResult:
         self._finish_reason: FinishReason = "unknown"
         self._raw_finish_reason: Optional[str] = None
 
+    # -- public abort -------------------------------------------------------
+
+    def abort(self, reason: Optional[str] = None) -> None:
+        """Abort the run (AI SDK abort). The drive loop stops between provider
+        parts/steps, emits an AbortPart, and aggregates raise AbortError.
+
+        Note: a blocked provider SDK read cannot be interrupted; the abort takes
+        effect at the next part/step boundary."""
+        self._abort_reason = reason
+        self._abort_event.set()
+
+    _abort_reason: Optional[str] = None
+
+    @property
+    def aborted(self) -> Awaitable[bool]:
+        async def get() -> bool:
+            await self._wait_done()
+            return self._aborted
+
+        return get()
+
     # -- plumbing -----------------------------------------------------------
 
     def _ensure_started(self) -> None:
         if self._task is None:
             self._cond = asyncio.Condition()
             self._task = asyncio.get_running_loop().create_task(self._drive())
+            if self._on_chunk is not None:
+                self._chunk_task = asyncio.get_running_loop().create_task(
+                    self._run_on_chunk()
+                )
 
     async def _drive(self) -> None:
         try:
             await self._run_step_loop(self)
+        except AbortError as exc:
+            self._aborted = True
+            self._error = exc
+            await self._emit(AbortPart(reason=getattr(exc, "reason", None)))
+            if self._on_abort is not None:
+                cb = self._on_abort(self)
+                if asyncio.iscoroutine(cb):
+                    await cb
         except BaseException as exc:  # noqa: BLE001 — surfaced as error part
             self._error = exc
             await self._emit(ErrorPart(error=exc))
@@ -542,12 +904,17 @@ class StreamTextResult:
         async with self._cond:
             self._parts.append(part)
             self._cond.notify_all()
-        if self._on_chunk is not None:
+
+    async def _run_on_chunk(self) -> None:
+        """Drive on_chunk from the transformed stream so it observes the same
+        parts subscribers do (AI SDK applies transforms before on_chunk)."""
+        async for part in self._subscribe():
+            assert self._on_chunk is not None
             cb = self._on_chunk(part)
             if asyncio.iscoroutine(cb):
                 await cb
 
-    async def _subscribe(self) -> AsyncIterator[TextStreamPart]:
+    async def _subscribe_raw(self) -> AsyncIterator[TextStreamPart]:
         self._ensure_started()
         assert self._cond is not None
         index = 0
@@ -561,10 +928,21 @@ class StreamTextResult:
                 return
             yield part
 
+    def _subscribe(self) -> AsyncIterator[TextStreamPart]:
+        """Subscribe to the (transformed) stream — all public stream consumers
+        and on_chunk observe transformed parts. The per-step content and the
+        awaitable aggregates are built by the drive loop from raw provider parts
+        and are NOT affected by transforms (see stream_text docstring)."""
+        if self._transform is None:
+            return self._subscribe_raw()
+        return self._transform(self._subscribe_raw())
+
     async def _wait_done(self) -> None:
         self._ensure_started()
         assert self._task is not None
         await asyncio.shield(self._task)
+        if self._chunk_task is not None:
+            await asyncio.shield(self._chunk_task)
         if self._error is not None:
             raise self._error
 
@@ -773,6 +1151,12 @@ def stream_text(
     on_error: Optional[Callable[[Any], Any]] = None,
     on_step_finish: Optional[Callable[[StepResult], Any]] = None,
     on_finish: Optional[Callable[[StreamTextResult], Any]] = None,
+    on_abort: Optional[Callable[[StreamTextResult], Any]] = None,
+    prepare_step: Optional[PrepareStepFn] = None,
+    repair_tool_call: Optional[RepairToolCallFn] = None,
+    abort_signal: Optional[asyncio.Event] = None,
+    timeout: Union[float, int, dict, None] = None,
+    transform: Union[Transform, list, None] = None,
 ) -> StreamTextResult:
     """Stream text (and tool calls) — the AI SDK streamText().
 
@@ -783,20 +1167,60 @@ def stream_text(
     Pass `output=Output.object(...)` for structured output: it sets
     CallOptions.response_format and enables `partial_output_stream` and the
     awaitable `output`.
+
+    Loop control (AI SDK parity):
+    - `prepare_step` / `repair_tool_call` — see generate_text.
+    - `abort_signal` (asyncio.Event) or `StreamTextResult.abort()`: stops the
+      run between provider parts/steps, emits an AbortPart, ends WITHOUT a finish
+      part; aggregates raise AbortError and `on_abort` fires. A blocked provider
+      read cannot be interrupted — abort takes effect at the next boundary.
+    - `timeout`: float seconds (total) or {"total_ms", "step_ms"} dict; on expiry
+      an ErrorPart is emitted and aggregates re-raise GenerationTimeoutError.
+    - `transform`: one transform or a list (composed in order). Transforms are
+      applied at the subscription layer; full_stream/text_stream/
+      partial_output_stream and on_chunk observe transformed parts. The per-step
+      content and awaitable aggregates are computed from raw provider parts and
+      are NOT transformed.
     """
     resolved = _resolve_model(model)
     initial_messages = standardize_prompt(system=system, prompt=prompt, messages=messages)
     stop = stop_when if stop_when is not None else step_count_is(1)
-    specs = _tool_specs(tools, active_tools)
     response_format = output.response_format() if output is not None else None
+    total_timeout, step_timeout = _normalize_timeout(timeout)
+    composed_transform = compose_transforms(transform)
 
     async def run_step_loop(result: StreamTextResult) -> None:
         working_messages = list(initial_messages)
         await result._emit(StreamStart())
 
+        total_deadline = (
+            time.monotonic() + total_timeout if total_timeout is not None else None
+        )
+        abort_event = result._abort_event
+
         while True:
+            if abort_event.is_set():
+                raise AbortError(reason=result._abort_reason)
+
+            prep = await _call_prepare_step(
+                prepare_step,
+                model=resolved,
+                step_number=len(result.steps),
+                steps=result.steps,
+                messages=working_messages,
+            )
+            cfg = _resolve_step_config(
+                prep,
+                base_model=resolved,
+                base_tools=tools,
+                base_active_tools=active_tools,
+                base_tool_choice=tool_choice,
+                working_messages=working_messages,
+            )
+            step_tools = cfg.tools
+
             options = CallOptions(
-                prompt=list(working_messages),
+                prompt=cfg.messages,
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
                 top_p=top_p,
@@ -805,14 +1229,22 @@ def stream_text(
                 frequency_penalty=frequency_penalty,
                 stop_sequences=stop_sequences,
                 seed=seed,
-                tools=specs,
-                tool_choice=tool_choice,
+                tools=cfg.specs,
+                tool_choice=cfg.tool_choice,
                 response_format=response_format,
                 headers=headers,
                 provider_options=provider_options or {},
                 include_raw_chunks=include_raw_chunks,
             )
             await result._emit(StartStep())
+
+            budget = _step_budget(step_timeout, total_deadline)
+            step_deadline = (
+                time.monotonic() + budget if budget is not None else None
+            )
+
+            def _timed_out() -> bool:
+                return step_deadline is not None and time.monotonic() >= step_deadline
 
             # -- consume one provider stream -------------------------------
             content: list[AssistantContentPart] = []
@@ -825,7 +1257,19 @@ def stream_text(
             step_files: list[GeneratedFile] = []
             step_request: Any = None
 
-            async for part in resolved.do_stream(options):
+            async for part in cfg.model.do_stream(options):
+                # Abort/timeout are checked between provider parts; a blocked
+                # SDK read cannot be interrupted (documented in the docstring).
+                if abort_event.is_set():
+                    raise AbortError(reason=result._abort_reason)
+                if _timed_out():
+                    budget_kind = (
+                        "total"
+                        if total_deadline is not None
+                        and time.monotonic() >= total_deadline
+                        else "step"
+                    )
+                    raise GenerationTimeoutError(budget_kind)
                 if isinstance(part, ResponseMetadataPart):
                     response_meta.id = part.id or response_meta.id
                     response_meta.model_id = part.model_id or response_meta.model_id
@@ -836,6 +1280,8 @@ def stream_text(
                     finish_reason = part.finish_reason
                     raw_finish_reason = part.raw_finish_reason
                     usage = part.total_usage
+                    if part.provider_metadata is not None:
+                        provider_metadata = part.provider_metadata
                     continue
                 if isinstance(part, ErrorPart):
                     raise part.error if isinstance(
@@ -896,7 +1342,15 @@ def stream_text(
 
             # -- execute tools, finish the step ----------------------------
             tool_calls = [p for p in content if isinstance(p, ToolCallPart)]
-            tool_results = await _execute_tool_calls(tool_calls, tools, working_messages)
+            tool_calls = await _repair_tool_calls(
+                content, tool_calls, step_tools, repair_tool_call, cfg.messages
+            )
+            tool_results = await _execute_tool_calls(
+                tool_calls,
+                step_tools,
+                cfg.messages,
+                strict_unknown=repair_tool_call is not None,
+            )
             for tr in tool_results:
                 event: TextStreamPart
                 if tr.is_error:
@@ -941,6 +1395,7 @@ def stream_text(
                     usage=usage,
                     finish_reason=finish_reason,
                     raw_finish_reason=raw_finish_reason,
+                    provider_metadata=provider_metadata,
                     request=step_request,
                 )
             )
@@ -948,6 +1403,9 @@ def stream_text(
                 cb = on_step_finish(step)
                 if asyncio.iscoroutine(cb):
                     await cb
+
+            if abort_event.is_set():
+                raise AbortError(reason=result._abort_reason)
 
             if await _is_stopped(stop, result.steps) or not _should_continue(step):
                 break
@@ -969,7 +1427,10 @@ def stream_text(
         on_error=on_error,
         on_step_finish=on_step_finish,
         on_finish=on_finish,
+        on_abort=on_abort,
         output=output,
+        transform=composed_transform,
+        abort_signal=abort_signal,
     )
 
 

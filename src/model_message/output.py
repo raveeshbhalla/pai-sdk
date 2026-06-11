@@ -19,7 +19,7 @@ from typing import Any, AsyncIterator, Awaitable, Optional, Sequence, Union
 from pydantic import BaseModel
 
 from .errors import NoObjectGeneratedError
-from .results import FinishReason, ResponseMetadata, Usage
+from .results import CallWarning, FinishReason, ResponseMetadata, Usage
 
 ObjectSchema = Union[type[BaseModel], dict[str, Any]]
 
@@ -241,7 +241,7 @@ class GenerateObjectResult:
     total_usage: Usage
     finish_reason: FinishReason
     response: ResponseMetadata
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[CallWarning] = field(default_factory=list)
     provider_metadata: Optional[dict[str, dict[str, Any]]] = None
 
 

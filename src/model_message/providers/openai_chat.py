@@ -29,11 +29,20 @@ from ..messages import (
     ToolResultPart,
     UserModelMessage,
 )
+from ..messages import FileIdData, UrlSourcePart
 from ..provider import CallOptions, LanguageModel, ProviderResult
-from ..results import FinishReason, ResponseMetadata, Usage
+from ..results import (
+    CallWarning,
+    FinishReason,
+    InputTokenDetails,
+    OutputTokenDetails,
+    ResponseMetadata,
+    Usage,
+)
 from ..stream import (
     Finish,
     ProviderStreamPart,
+    RawPart,
     ResponseMetadataPart,
     TextDelta,
     TextEnd,
@@ -42,7 +51,14 @@ from ..stream import (
     ToolInputEnd,
     ToolInputStart,
 )
-from ._util import as_data_url, split_data_content, wrap_provider_error
+from ._util import (
+    as_data_url,
+    file_id_value,
+    raw_event_value,
+    request_echo,
+    split_data_content,
+    wrap_provider_error,
+)
 
 _FINISH_REASONS: dict[str, FinishReason] = {
     "stop": "stop",
@@ -60,12 +76,20 @@ def _user_part(part: Any) -> dict[str, Any]:
     if isinstance(part, TextPart):
         return {"type": "text", "text": part.text}
     if isinstance(part, ImagePart):
+        if isinstance(part.image, FileIdData):
+            # Chat Completions has no image-by-file-id input shape.
+            raise ValueError(
+                "OpenAI Chat Completions does not support images referenced by "
+                "file id; use inline image bytes/URL or the Responses API."
+            )
         image_url: dict[str, Any] = {"url": as_data_url(part.image, part.media_type)}
         detail = ((part.provider_options or {}).get("openai") or {}).get("image_detail")
         if detail:
             image_url["detail"] = detail
         return {"type": "image_url", "image_url": image_url}
     if isinstance(part, FilePart):
+        if isinstance(part.data, FileIdData):
+            return {"type": "file", "file": {"file_id": file_id_value(part.data)}}
         if part.media_type.startswith("image/"):
             return {
                 "type": "image_url",
@@ -155,16 +179,40 @@ def _map_usage(usage: Any) -> Usage:
         return Usage()
     completion_details = getattr(usage, "completion_tokens_details", None)
     prompt_details = getattr(usage, "prompt_tokens_details", None)
-    return Usage(
-        input_tokens=getattr(usage, "prompt_tokens", None),
-        output_tokens=getattr(usage, "completion_tokens", None),
-        total_tokens=getattr(usage, "total_tokens", None),
-        reasoning_tokens=getattr(completion_details, "reasoning_tokens", None)
+    input_tokens = getattr(usage, "prompt_tokens", None)
+    output_tokens = getattr(usage, "completion_tokens", None)
+    reasoning_tokens = (
+        getattr(completion_details, "reasoning_tokens", None)
         if completion_details
-        else None,
-        cached_input_tokens=getattr(prompt_details, "cached_tokens", None)
-        if prompt_details
-        else None,
+        else None
+    )
+    cached_tokens = (
+        getattr(prompt_details, "cached_tokens", None) if prompt_details else None
+    )
+
+    input_token_details: Optional[InputTokenDetails] = None
+    if cached_tokens is not None:
+        no_cache = (
+            input_tokens - cached_tokens if input_tokens is not None else None
+        )
+        input_token_details = InputTokenDetails(
+            cache_read_tokens=cached_tokens, no_cache_tokens=no_cache
+        )
+    output_token_details: Optional[OutputTokenDetails] = None
+    if reasoning_tokens is not None:
+        text = output_tokens - reasoning_tokens if output_tokens is not None else None
+        output_token_details = OutputTokenDetails(
+            reasoning_tokens=reasoning_tokens, text_tokens=text
+        )
+
+    return Usage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=getattr(usage, "total_tokens", None),
+        reasoning_tokens=reasoning_tokens,
+        cached_input_tokens=cached_tokens,
+        input_token_details=input_token_details,
+        output_token_details=output_token_details,
     )
 
 
@@ -267,21 +315,55 @@ class OpenAIChatLanguageModel(LanguageModel):
             request["extra_headers"] = options.headers
         return request
 
+    @staticmethod
+    def _warnings(options: CallOptions) -> list[CallWarning]:
+        warnings: list[CallWarning] = []
+        # top_k has no Chat Completions equivalent and is never sent.
+        if options.top_k is not None:
+            warnings.append(
+                CallWarning(type="unsupported-setting", setting="top_k")
+            )
+        return warnings
+
+    def _extract_provider_metadata(
+        self, response: Any
+    ) -> Optional[dict[str, dict[str, Any]]]:
+        """Overridable hook for provider-specific metadata (e.g. OpenRouter
+        cost). Returns provider_metadata to attach to the result, or None.
+
+        Called in do_generate. Streaming has no metadata channel to the engine,
+        so the hook is intentionally not invoked from do_stream."""
+        return None
+
+    def _map_usage(self, usage: Any) -> Usage:
+        """Overridable usage mapping. Delegates to the module-level mapper;
+        subclasses may augment it (e.g. OpenRouter cache_write_tokens)."""
+        return _map_usage(usage)
+
+    def _reasoning_part(self, message: Any):
+        """Build a ReasoningPart from a chat message, or None. Overridable so
+        subclasses can attach provider-specific reasoning details."""
+        from ..messages import ReasoningPart
+
+        reasoning_text = getattr(message, "reasoning", None)  # OpenRouter extension
+        if not reasoning_text:
+            return None
+        return ReasoningPart(text=reasoning_text)
+
     async def do_generate(self, options: CallOptions) -> ProviderResult:
         client = self._client()
+        request = self._request(options, stream=False)
         try:
-            response = await client.chat.completions.create(**self._request(options, stream=False))
+            response = await client.chat.completions.create(**request)
         except Exception as exc:  # noqa: BLE001
             raise wrap_provider_error(exc, self.provider) from exc
 
         choice = response.choices[0]
         message = choice.message
         content: list[AssistantContentPart] = []
-        reasoning_text = getattr(message, "reasoning", None)  # OpenRouter extension
-        if reasoning_text:
-            from ..messages import ReasoningPart
-
-            content.append(ReasoningPart(text=reasoning_text))
+        reasoning_part = self._reasoning_part(message)
+        if reasoning_part is not None:
+            content.append(reasoning_part)
         if message.content:
             content.append(TextPart(text=message.content))
         for call in message.tool_calls or []:
@@ -294,39 +376,62 @@ class OpenAIChatLanguageModel(LanguageModel):
                     tool_call_id=call.id, tool_name=call.function.name, input=parsed
                 )
             )
+        # URL citations from web search → sources.
+        for ann in getattr(message, "annotations", None) or []:
+            if getattr(ann, "type", None) == "url_citation":
+                cite = getattr(ann, "url_citation", None)
+                if cite is not None and getattr(cite, "url", None):
+                    content.append(
+                        UrlSourcePart(
+                            id=cite.url,
+                            url=cite.url,
+                            title=getattr(cite, "title", None),
+                        )
+                    )
 
         raw_finish = choice.finish_reason
         return ProviderResult(
             content=content,
             finish_reason=_FINISH_REASONS.get(raw_finish or "", "unknown"),
             raw_finish_reason=raw_finish,
-            usage=_map_usage(response.usage),
+            usage=self._map_usage(response.usage),
             response=ResponseMetadata(id=response.id, model_id=response.model),
+            warnings=self._warnings(options),
+            provider_metadata=self._extract_provider_metadata(response),
+            request=request_echo(request),
         )
 
     async def do_stream(
         self, options: CallOptions
     ) -> AsyncIterator[ProviderStreamPart]:
         client = self._client()
+        request = self._request(options, stream=True)
         try:
-            stream = await client.chat.completions.create(**self._request(options, stream=True))
+            stream = await client.chat.completions.create(**request)
         except Exception as exc:  # noqa: BLE001
             raise wrap_provider_error(exc, self.provider) from exc
 
+        echoed_request = request_echo(request)
         usage = Usage()
         raw_finish: Optional[str] = None
         text_open = False
         sent_metadata = False
+        last_chunk: Any = None
         # tool call accumulation by index: {index: {id, name, arguments}}
         tool_calls: dict[int, dict[str, Any]] = {}
 
         try:
             async for chunk in stream:
+                if options.include_raw_chunks:
+                    yield RawPart(raw_value=raw_event_value(chunk))
                 if not sent_metadata and getattr(chunk, "id", None):
                     sent_metadata = True
-                    yield ResponseMetadataPart(id=chunk.id, model_id=chunk.model)
+                    yield ResponseMetadataPart(
+                        id=chunk.id, model_id=chunk.model, request=echoed_request
+                    )
                 if getattr(chunk, "usage", None):
-                    usage = _map_usage(chunk.usage)
+                    usage = self._map_usage(chunk.usage)
+                    last_chunk = chunk  # usage-bearing chunk carries extensions
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
@@ -379,4 +484,9 @@ class OpenAIChatLanguageModel(LanguageModel):
             finish_reason=_FINISH_REASONS.get(raw_finish or "", "unknown"),
             raw_finish_reason=raw_finish,
             total_usage=usage,
+            provider_metadata=(
+                self._extract_provider_metadata(last_chunk)
+                if last_chunk is not None
+                else None
+            ),
         )

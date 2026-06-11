@@ -593,3 +593,31 @@ async def test_loop_inert_with_approval_request():
         for m in asst
         for p in m.content
     )
+
+
+async def test_streaming_provider_metadata_via_finish_part():
+    """Providers can attach provider_metadata to their Finish part; the engine
+    copies it onto the step and FinishStep."""
+    from model_message import stream_text
+    from model_message.provider import CallOptions
+    from model_message.stream import Finish, ResponseMetadataPart, TextDelta, TextEnd, TextStart
+
+    from conftest import FakeModel, text_step
+
+    class MetadataModel(FakeModel):
+        async def do_stream(self, options: CallOptions):
+            yield ResponseMetadataPart(id="r1", model_id="fake-1")
+            yield TextStart(id="0")
+            yield TextDelta(id="0", text="hi")
+            yield TextEnd(id="0")
+            yield Finish(
+                finish_reason="stop",
+                total_usage=text_step("hi").usage,
+                provider_metadata={"fake": {"cost": 0.01}},
+            )
+
+    result = stream_text(model=MetadataModel(), prompt="hi")
+    finish_steps = [p async for p in result.full_stream if p.type == "finish-step"]
+    assert finish_steps[0].provider_metadata == {"fake": {"cost": 0.01}}
+    steps = await result.all_steps
+    assert steps[0].provider_metadata == {"fake": {"cost": 0.01}}

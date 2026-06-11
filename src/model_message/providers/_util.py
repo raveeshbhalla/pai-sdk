@@ -103,6 +103,44 @@ def merge_provider_options(
             request.setdefault(name, value)
 
 
+def file_id_value(file_id: object) -> str:
+    """Extract a plain string file id from a FileIdData.id value.
+
+    The id may be a plain string or a small mapping (e.g. {"file_id": "..."});
+    for a mapping, prefer the "file_id" key, else fall back to the sole value.
+    """
+    fid = getattr(file_id, "id", file_id)
+    if isinstance(fid, str):
+        return fid
+    if isinstance(fid, dict):
+        if "file_id" in fid:
+            return str(fid["file_id"])
+        values = list(fid.values())
+        if len(values) == 1:
+            return str(values[0])
+        raise ValueError(f"Ambiguous file id mapping: {fid!r}")
+    return str(fid)
+
+
+def raw_event_value(event: object) -> object:
+    """Best-effort JSON-able representation of a provider SSE event for RawPart."""
+    dump = getattr(event, "model_dump", None)
+    if callable(dump):
+        try:
+            return dump()
+        except Exception:  # noqa: BLE001
+            pass
+    if isinstance(event, dict):
+        return event
+    return event
+
+
+def request_echo(request: dict) -> dict:
+    """A JSON-able copy of a request body for ProviderResult.request, minus
+    transport-only keys (headers)."""
+    return {k: v for k, v in request.items() if k not in ("extra_headers",)}
+
+
 def system_and_rest(messages: list) -> tuple[list[str], list]:
     """Split out system message texts from the rest of the prompt."""
     system_texts: list[str] = []

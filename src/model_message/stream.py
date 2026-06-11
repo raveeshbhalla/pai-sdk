@@ -23,7 +23,7 @@ class StreamStart:
 @dataclass
 class StartStep:
     request: Any = None
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[Any] = field(default_factory=list)  # CallWarning entries
     type: Literal["start-step"] = "start-step"
 
 
@@ -163,6 +163,9 @@ class Finish:
     finish_reason: FinishReason
     total_usage: Usage
     raw_finish_reason: Optional[str] = None
+    # Providers may attach step-level provider metadata here in do_stream;
+    # the engine copies it onto the StepResult/FinishStep.
+    provider_metadata: Optional[dict[str, Any]] = None
     type: Literal["finish"] = "finish"
 
 
@@ -176,6 +179,15 @@ class ErrorPart:
 class RawPart:
     raw_value: Any
     type: Literal["raw"] = "raw"
+
+
+@dataclass
+class AbortPart:
+    """Emitted when a stream is aborted (AI SDK abort). Ends the stream without
+    a finish part; awaitable aggregates raise AbortError."""
+
+    reason: Optional[str] = None
+    type: Literal["abort"] = "abort"
 
 
 TextStreamPart = Union[
@@ -199,6 +211,7 @@ TextStreamPart = Union[
     Finish,
     ErrorPart,
     RawPart,
+    AbortPart,
 ]
 
 # Parts a provider's do_stream may yield (subset + response metadata; the

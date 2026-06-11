@@ -79,6 +79,27 @@ class NoObjectGeneratedError(AISDKError):
         self.usage = usage
 
 
+class AbortError(AISDKError):
+    """The run was aborted via an abort_signal / StreamTextResult.abort()."""
+
+    def __init__(self, message: str = "The operation was aborted.", *, reason: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class GenerationTimeoutError(AISDKError):
+    """A generation timeout budget expired (total or per-step).
+
+    `budget` is "total" or "step" indicating which deadline fired.
+    """
+
+    def __init__(self, budget: str, timeout_ms: Optional[float] = None) -> None:
+        suffix = f" after {timeout_ms:.0f}ms" if timeout_ms is not None else ""
+        super().__init__(f"Generation timed out ({budget} budget){suffix}.")
+        self.budget = budget
+        self.timeout_ms = timeout_ms
+
+
 class MissingDependencyError(AISDKError):
     """An optional provider SDK is not installed."""
 

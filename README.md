@@ -257,18 +257,70 @@ you append `result.response.messages` to history.
 `frequency_penalty`, `stop_sequences`, `seed`, `tool_choice`
 (`"auto" | "none" | "required" | {"type": "tool", "tool_name": ...}`),
 `active_tools`, `headers`, `max_retries`, `provider_options`, `system`,
-`prompt` *or* `messages`. Parameters a provider doesn't support are reported
-in `result.warnings` or ignored by that provider, mirroring AI SDK behavior.
+`prompt` *or* `messages` — plus loop/lifecycle control: `prepare_step`
+(per-step model/tools/tool_choice/messages overrides), `repair_tool_call`,
+`abort_signal` (an `asyncio.Event`; or `result.abort()` on streams),
+`timeout` (total seconds or `{"total_ms", "step_ms"}`), `output` (structured
+output spec), and on `stream_text`: `transform` (e.g. `smooth_stream()`),
+`include_raw_chunks`, `on_abort`. Parameters a provider doesn't support are
+reported as `CallWarning`s in `result.warnings`, mirroring AI SDK behavior.
+
+## Structured output
+
+```python
+from pydantic import BaseModel
+from model_message import generate_object, stream_object, Output, generate_text
+
+class Recipe(BaseModel):
+    name: str
+    ingredients: list[str]
+
+result = await generate_object(model=openai("gpt-5.4"), schema=Recipe,
+                               prompt="A simple pancake recipe.")
+print(result.object.name)            # validated Recipe instance
+
+# Streaming partials:
+result = stream_object(model=openai("gpt-5.4"), schema=Recipe, prompt="...")
+async for partial in result.partial_object_stream:
+    print(partial)                   # growing dicts via parse_partial_json
+print(await result.object)
+
+# Or combine text + structured output on generate_text:
+result = await generate_text(model=..., prompt=..., output=Output.object(schema=Recipe))
+print(result.output)
+```
+
+## Agent
+
+```python
+from model_message import Agent
+
+agent = Agent(
+    model=anthropic("claude-opus-4-8"),
+    system="You are a research assistant.",
+    tools={"search": search_tool},
+    # Agents default to stop_when=step_count_is(20), like the AI SDK
+)
+result = await agent.generate(prompt="Find recent papers on...")
+stream = agent.stream(prompt="...", temperature=0.2)  # per-call overrides win
+```
 
 ## Results
 
 `GenerateTextResult` / awaitables on `StreamTextResult`:
 
-- `text`, `reasoning_text`, `content` (typed parts)
-- `tool_calls`, `tool_results`
+- `text`, `reasoning_text`, `content` (typed parts), `output` (structured output)
+- `tool_calls`, `tool_results` (including provider-executed server-side tools
+  — Anthropic/OpenAI web search etc. — flagged `provider_executed`)
+- `sources` (web-search/grounding citations as `UrlSourcePart`), `files`
+  (`GeneratedFile` with `.bytes`/`.base64`)
 - `finish_reason` (`stop | length | content-filter | tool-calls | error | other | unknown`), `raw_finish_reason`
-- `usage` / `total_usage` (`input_tokens`, `output_tokens`, `total_tokens`, `reasoning_tokens`, `cached_input_tokens`)
-- `steps` (per-step results), `response.messages` (append to history), `warnings`
+- `usage` / `total_usage` (`input_tokens`, `output_tokens`, `total_tokens`,
+  `reasoning_tokens`, `cached_input_tokens`, plus `input_token_details` /
+  `output_token_details` cache/reasoning breakdowns)
+- `steps` (per-step results), `response.messages` (append to history),
+  `warnings` (structured `CallWarning`s), `request` (echoed request body),
+  `provider_metadata` (e.g. OpenRouter `cost`, Anthropic cache tokens)
 
 ## Architecture
 
@@ -281,6 +333,7 @@ live in the core.
 
 ## Not (yet) implemented
 
-Structured output helpers (`Output.object`), tool-approval flow, sources,
-provider-executed tools, telemetry, and `prepare_step` are out of scope for
-this first version.
+Embeddings, the provider registry/middleware (`wrap_language_model`), MCP
+tool loading, image/speech/transcription models, telemetry, and the
+tool-approval *flow* (the message types exist; the loop doesn't pause on
+approvals yet).
