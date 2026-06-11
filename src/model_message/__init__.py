@@ -12,6 +12,15 @@ for Python, with OpenAI, Anthropic, Google Gemini, and OpenRouter providers.
 """
 
 from .agent import Agent
+from .embedding import (
+    EmbeddingModel,
+    EmbeddingUsage,
+    EmbedManyResult,
+    EmbedResult,
+    cosine_similarity,
+    embed,
+    embed_many,
+)
 from .errors import (
     AbortError,
     AISDKError,
@@ -74,6 +83,14 @@ from .messages import (
     model_message_adapter,
     model_messages_adapter,
 )
+from .middleware import (
+    LanguageModelMiddleware,
+    default_settings_middleware,
+    extract_reasoning_middleware,
+    logging_middleware,
+    simulate_streaming_middleware,
+    wrap_language_model,
+)
 from .output import (
     GenerateObjectResult,
     Output,
@@ -83,6 +100,13 @@ from .output import (
     stream_object,
 )
 from .provider import CallOptions, FunctionToolSpec, LanguageModel, ProviderResult
+from .serialize import dump_messages, dump_messages_json, load_messages
+from .registry import (
+    CustomProvider,
+    ProviderRegistry,
+    create_provider_registry,
+    custom_provider,
+)
 from .results import (
     CallWarning,
     FinishReason,
@@ -143,6 +167,26 @@ __all__ = [
     "Transform",
     "smooth_stream",
     "compose_transforms",
+    # middleware
+    "LanguageModelMiddleware",
+    "wrap_language_model",
+    "default_settings_middleware",
+    "extract_reasoning_middleware",
+    "simulate_streaming_middleware",
+    "logging_middleware",
+    # registry
+    "create_provider_registry",
+    "custom_provider",
+    "ProviderRegistry",
+    "CustomProvider",
+    # embeddings
+    "embed",
+    "embed_many",
+    "cosine_similarity",
+    "EmbeddingModel",
+    "EmbedResult",
+    "EmbedManyResult",
+    "EmbeddingUsage",
     "tool",
     "Tool",
     "ToolSet",
@@ -188,6 +232,9 @@ __all__ = [
     "ProviderOptions",
     "model_message_adapter",
     "model_messages_adapter",
+    "dump_messages",
+    "dump_messages_json",
+    "load_messages",
     # results
     "GenerateTextResult",
     "StepResult",

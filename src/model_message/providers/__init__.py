@@ -16,13 +16,16 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ..embedding import EmbeddingModel
 from ..errors import NoSuchProviderError
 from ..provider import LanguageModel
 from .anthropic import AnthropicLanguageModel
 from .azure import AzureChatLanguageModel, AzureResponsesLanguageModel
 from .bedrock import BedrockAnthropicLanguageModel
 from .google import GoogleLanguageModel
+from .google_embedding import GoogleEmbeddingModel
 from .openai_chat import OpenAIChatLanguageModel
+from .openai_embedding import OpenAIEmbeddingModel
 from .openai_responses import OpenAIResponsesLanguageModel
 from .openrouter import OpenRouterLanguageModel, attribution_headers
 from .vertex import (
@@ -63,6 +66,14 @@ class OpenAIProvider:
             default_headers=self._headers,
         )
 
+    def embedding(self, model_id: str) -> EmbeddingModel:
+        return OpenAIEmbeddingModel(
+            model_id=model_id,
+            api_key=self._api_key,
+            base_url=self._base_url,
+            default_headers=self._headers,
+        )
+
 
 class AnthropicProvider:
     def __init__(
@@ -90,6 +101,9 @@ class GoogleProvider:
 
     def __call__(self, model_id: str) -> LanguageModel:
         return GoogleLanguageModel(model_id=model_id, api_key=self._api_key)
+
+    def embedding(self, model_id: str) -> EmbeddingModel:
+        return GoogleEmbeddingModel(model_id=model_id, api_key=self._api_key)
 
 
 class OpenRouterProvider:
@@ -178,6 +192,32 @@ class VertexProvider:
             model_id=model_id, project=self._project, location=self._location
         )
 
+    def embedding(self, model_id: str) -> EmbeddingModel:
+        import os
+
+        project = self._project
+        location = self._location
+
+        def factory():
+            from google import genai
+
+            kwargs: dict = {"vertexai": True}
+            proj = project or os.environ.get("GOOGLE_CLOUD_PROJECT")
+            loc = (
+                location
+                or os.environ.get("GOOGLE_CLOUD_LOCATION")
+                or "us-central1"
+            )
+            if proj:
+                kwargs["project"] = proj
+            if loc:
+                kwargs["location"] = loc
+            return genai.Client(**kwargs)
+
+        return GoogleEmbeddingModel(
+            model_id=model_id, provider="google.vertex.embedding", client_factory=factory
+        )
+
 
 class AzureProvider:
     """azure(deployment) -> Responses API; azure.chat(deployment) -> Chat
@@ -218,6 +258,29 @@ class AzureProvider:
             default_headers=self._headers,
             azure_endpoint=self._azure_endpoint,
             api_version=self._api_version,
+        )
+
+    def embedding(self, deployment: str) -> EmbeddingModel:
+        api_key = self._api_key
+        azure_endpoint = self._azure_endpoint
+        api_version = self._api_version
+        headers = self._headers
+
+        def factory():
+            from .azure import _azure_client_kwargs
+
+            try:
+                import openai
+            except ImportError as exc:
+                from ..errors import MissingDependencyError
+
+                raise MissingDependencyError("openai", "azure") from exc
+            return openai.AsyncAzureOpenAI(
+                **_azure_client_kwargs(api_key, azure_endpoint, api_version, headers)
+            )
+
+        return OpenAIEmbeddingModel(
+            model_id=deployment, provider="azure.embedding", client_factory=factory
         )
 
 
@@ -297,5 +360,7 @@ __all__ = [
     "VertexAnthropicLanguageModel",
     "AzureResponsesLanguageModel",
     "AzureChatLanguageModel",
+    "OpenAIEmbeddingModel",
+    "GoogleEmbeddingModel",
     "resolve_model_string",
 ]

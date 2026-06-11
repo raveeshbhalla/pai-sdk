@@ -331,9 +331,43 @@ stream = agent.stream(prompt="...", temperature=0.2)  # per-call overrides win
 methods; the tool loop, streaming framing, retries, and message accounting
 live in the core.
 
+## Middleware, registry, embeddings, traces
+
+```python
+from model_message import (
+    wrap_language_model, extract_reasoning_middleware, default_settings_middleware,
+    create_provider_registry, custom_provider,
+    embed_many, cosine_similarity,
+    dump_messages_json, load_messages,
+)
+
+# Middleware (AI SDK LanguageModelMiddleware): logging, defaults, reasoning
+# extraction, simulated streaming — or write your own transform_params /
+# wrap_generate / wrap_stream.
+logged = wrap_language_model(openai("gpt-5.4"), [
+    default_settings_middleware({"temperature": 0.2}),
+    extract_reasoning_middleware(tag_name="think"),
+])
+
+# Registry + aliases (great for swapping wrapped/candidate models):
+registry = create_provider_registry({
+    "openai": openai,
+    "aliases": custom_provider(language_models={"smart": logged}),
+})
+model = registry.language_model("aliases:smart")
+
+# Embeddings:
+result = await embed_many(model=openai.embedding("text-embedding-3-small"),
+                          values=["a", "b"])
+
+# Lossless traces — ModelMessage is the log schema. Subclasses with extra
+# structured fields (templates, variable bindings) round-trip intact:
+text = dump_messages_json([*messages, *result.response.messages])
+history = load_messages(text)   # ready to re-send
+```
+
 ## Not (yet) implemented
 
-Embeddings, the provider registry/middleware (`wrap_language_model`), MCP
-tool loading, image/speech/transcription models, telemetry, and the
+MCP tool loading, image/speech/transcription models, telemetry, and the
 tool-approval *flow* (the message types exist; the loop doesn't pause on
 approvals yet).
