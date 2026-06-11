@@ -366,6 +366,52 @@ text = dump_messages_json([*messages, *result.response.messages])
 history = load_messages(text)   # ready to re-send
 ```
 
+## Typed messages & prompt configs
+
+Prompts as data: JSON/YAML in the codebase or fetched from a service, with
+`{variable}` slots and an explicit optimization contract.
+
+```yaml
+# prompts/triage.yaml
+name: support-triage
+model: anthropic/claude-haiku-4-5
+params: { max_output_tokens: 500 }
+output:
+  schema: { type: object, properties: { urgency: { type: string } },
+            required: [urgency], additionalProperties: false }
+messages:
+  - id: instructions
+    role: system
+    optimize: true          # reflection (e.g. GEPA) MAY rewrite this text
+    template: |
+      You triage support tickets for {company}. Be decisive.
+  - id: ticket
+    role: user
+    template: "Ticket: {ticket}"
+```
+
+```python
+from model_message import load_prompt, load_prompt_url
+
+prompt = load_prompt("prompts/triage.yaml")        # or a dict, or await load_prompt_url(...)
+result = await prompt.generate({"company": "Acme", "ticket": "It broke"})
+print(result.output)                               # validated against the schema
+
+# The optimization contract, enforced:
+evolved = prompt.with_template("instructions", "You are {company}'s expert...")
+prompt.with_template("ticket", "...")              # PromptError: not optimize: true
+prompt.with_template("instructions", "no vars")    # PromptError: variable set changed
+evolved.content_hash()                             # candidate identity
+evolved.to_dict()                                  # persist back to JSON/YAML
+```
+
+Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage`
+— subclasses that carry `template`, `variables`, `optimize`, and `id` alongside
+the rendered `content`. Providers see plain messages; `dump_messages` traces
+keep the structure, so logs record *which instructions* and *which bindings*
+produced every rollout. Template syntax is plain `{name}` only (portable to a
+TS implementation 1:1). YAML needs the `yaml` extra.
+
 ## Cost estimates
 
 Adapters normalize every provider's cache/reasoning token accounting into

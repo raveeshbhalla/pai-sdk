@@ -155,8 +155,23 @@ from .stream import (
     ToolInputStart,
     ToolResultEvent,
 )
+from .prompts import (
+    Prompt,
+    PromptError,
+    PromptMessage,
+    load_prompt,
+    load_prompt_url,
+)
 from .tools import Tool, ToolCallOptions, ToolSet, tool
 from .transforms import Transform, compose_transforms, smooth_stream
+from .typed import (
+    TemplateError,
+    TypedAssistantMessage,
+    TypedSystemMessage,
+    TypedUserMessage,
+    extract_variables,
+    render_template,
+)
 
 __version__ = "0.2.0"
 
@@ -307,4 +322,16 @@ __all__ = [
     "refresh_pricing",
     "parse_pricing_data",
     "PRICING_SOURCES",
+    # typed messages & prompt configs
+    "TypedSystemMessage",
+    "TypedUserMessage",
+    "TypedAssistantMessage",
+    "TemplateError",
+    "extract_variables",
+    "render_template",
+    "Prompt",
+    "PromptMessage",
+    "PromptError",
+    "load_prompt",
+    "load_prompt_url",
 ]
