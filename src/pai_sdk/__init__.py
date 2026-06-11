@@ -1,8 +1,8 @@
 """model-message — AI SDK ergonomics (ModelMessage, generate_text, stream_text)
 for Python, with OpenAI, Anthropic, Google Gemini, and OpenRouter providers.
 
-    from model_message import generate_text
-    from model_message.providers import anthropic
+    from pai_sdk import generate_text
+    from pai_sdk.providers import anthropic
 
     result = await generate_text(
         model=anthropic("claude-opus-4-8"),
@@ -80,8 +80,8 @@ from .messages import (
     UrlSourcePart,
     UserContent,
     UserModelMessage,
-    model_message_adapter,
-    model_messages_adapter,
+    pai_sdk_adapter,
+    pai_sdks_adapter,
 )
 from .middleware import (
     LanguageModelMiddleware,
@@ -262,8 +262,8 @@ __all__ = [
     "ToolApprovalRequest",
     "ToolApprovalResponse",
     "ProviderOptions",
-    "model_message_adapter",
-    "model_messages_adapter",
+    "pai_sdk_adapter",
+    "pai_sdks_adapter",
     "dump_messages",
     "dump_messages_json",
     "load_messages",

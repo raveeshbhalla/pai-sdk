@@ -17,8 +17,8 @@ import os
 import pytest
 from pydantic import BaseModel
 
-from model_message import Output, generate_object, generate_text, stream_object, stream_text
-from model_message.providers import anthropic, google, openai
+from pai_sdk import Output, generate_object, generate_text, stream_object, stream_text
+from pai_sdk.providers import anthropic, google, openai
 
 pytestmark = pytest.mark.live
 

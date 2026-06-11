@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from pydantic import model_validator
 
-from model_message import (
+from pai_sdk import (
     AssistantModelMessage,
     SystemModelMessage,
     TextPart,
@@ -17,7 +17,7 @@ from model_message import (
     UserModelMessage,
     generate_text,
 )
-from model_message.serialize import dump_messages, dump_messages_json, load_messages
+from pai_sdk.serialize import dump_messages, dump_messages_json, load_messages
 
 from conftest import FakeModel, text_step
 

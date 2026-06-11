@@ -10,7 +10,7 @@ import json
 import httpx
 import pytest
 
-from model_message.embedding import (
+from pai_sdk.embedding import (
     EmbeddingModel,
     EmbeddingUsage,
     EmbedManyProviderResult,
@@ -152,7 +152,7 @@ async def test_embed_many_usage_none_propagates():
 
 
 def openai_embedding_model(handler):
-    from model_message.providers.openai_embedding import OpenAIEmbeddingModel
+    from pai_sdk.providers.openai_embedding import OpenAIEmbeddingModel
 
     model = OpenAIEmbeddingModel(model_id="text-embedding-3-small", api_key="test")
     model._client_cache = openai_sdk.AsyncOpenAI(
@@ -242,7 +242,7 @@ async def test_openai_embedding_order_preserved_out_of_order_data():
 
 async def test_google_embedding_mapping():
     google_types = pytest.importorskip("google.genai.types")
-    from model_message.providers.google_embedding import GoogleEmbeddingModel
+    from pai_sdk.providers.google_embedding import GoogleEmbeddingModel
 
     response = google_types.EmbedContentResponse.model_validate(
         {
@@ -293,7 +293,7 @@ async def test_google_embedding_mapping():
 
 
 def test_google_embedding_defaults():
-    from model_message.providers.google_embedding import GoogleEmbeddingModel
+    from pai_sdk.providers.google_embedding import GoogleEmbeddingModel
 
     model = GoogleEmbeddingModel(model_id="text-embedding-004")
     assert model.provider == "google.embedding"
@@ -301,7 +301,7 @@ def test_google_embedding_defaults():
 
 
 def test_openai_embedding_defaults():
-    from model_message.providers.openai_embedding import OpenAIEmbeddingModel
+    from pai_sdk.providers.openai_embedding import OpenAIEmbeddingModel
 
     model = OpenAIEmbeddingModel(model_id="text-embedding-3-small")
     assert model.provider == "openai.embedding"
@@ -310,9 +310,9 @@ def test_openai_embedding_defaults():
 
 
 def test_factory_methods():
-    from model_message.providers import azure, google, openai, vertex
-    from model_message.providers.google_embedding import GoogleEmbeddingModel
-    from model_message.providers.openai_embedding import OpenAIEmbeddingModel
+    from pai_sdk.providers import azure, google, openai, vertex
+    from pai_sdk.providers.google_embedding import GoogleEmbeddingModel
+    from pai_sdk.providers.openai_embedding import OpenAIEmbeddingModel
 
     assert isinstance(openai.embedding("text-embedding-3-small"), OpenAIEmbeddingModel)
     assert isinstance(google.embedding("text-embedding-004"), GoogleEmbeddingModel)

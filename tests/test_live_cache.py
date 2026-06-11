@@ -13,9 +13,9 @@ import asyncio
 
 import pytest
 
-from model_message import generate_text
-from model_message.pricing import estimate_cost, get_pricing
-from model_message.providers import anthropic, google, openai
+from pai_sdk import generate_text
+from pai_sdk.pricing import estimate_cost, get_pricing
+from pai_sdk.providers import anthropic, google, openai
 
 from test_live import _skip_unless
 

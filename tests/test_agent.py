@@ -1,10 +1,10 @@
-"""Tests for the Agent (ToolLoopAgent) abstraction in model_message.agent."""
+"""Tests for the Agent (ToolLoopAgent) abstraction in pai_sdk.agent."""
 
 import pytest
 from pydantic import BaseModel
 
-from model_message import step_count_is, tool
-from model_message.agent import Agent
+from pai_sdk import step_count_is, tool
+from pai_sdk.agent import Agent
 
 from conftest import FakeModel, text_step, tool_step
 

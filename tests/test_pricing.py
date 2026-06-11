@@ -1,6 +1,6 @@
 import pytest
 
-from model_message.pricing import (
+from pai_sdk.pricing import (
     CostEstimate,
     ModelPricing,
     NoPricingError,
@@ -8,7 +8,7 @@ from model_message.pricing import (
     get_pricing,
     register_pricing,
 )
-from model_message.results import InputTokenDetails, OutputTokenDetails, Usage
+from pai_sdk.results import InputTokenDetails, OutputTokenDetails, Usage
 
 
 def test_basic_estimate_with_details():
@@ -113,7 +113,7 @@ def test_requires_model_or_pricing():
 # Server-hosted pricing sources
 # ---------------------------------------------------------------------------
 
-from model_message.pricing import parse_pricing_data  # noqa: E402
+from pai_sdk.pricing import parse_pricing_data  # noqa: E402
 
 
 def test_parse_litellm_format():
@@ -202,7 +202,7 @@ def test_parse_unknown_format_rejected():
 async def test_refresh_pricing_live(source):
     import httpx
 
-    from model_message.pricing import get_pricing, refresh_pricing
+    from pai_sdk.pricing import get_pricing, refresh_pricing
 
     try:
         count = await refresh_pricing(source)

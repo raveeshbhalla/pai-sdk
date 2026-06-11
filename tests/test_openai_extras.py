@@ -12,8 +12,8 @@ import json
 import httpx
 import pytest
 
-from model_message import generate_text, stream_text
-from model_message.messages import (
+from pai_sdk import generate_text, stream_text
+from pai_sdk.messages import (
     AssistantModelMessage,
     FileIdData,
     FilePart,
@@ -25,15 +25,15 @@ from model_message.messages import (
     UrlSourcePart,
     UserModelMessage,
 )
-from model_message.providers.openai_chat import (
+from pai_sdk.providers.openai_chat import (
     OpenAIChatLanguageModel,
     convert_to_chat_messages,
 )
-from model_message.providers.openai_responses import (
+from pai_sdk.providers.openai_responses import (
     OpenAIResponsesLanguageModel,
     convert_to_responses_input,
 )
-from model_message.results import CallWarning
+from pai_sdk.results import CallWarning
 
 openai_sdk = pytest.importorskip("openai")
 

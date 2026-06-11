@@ -11,7 +11,7 @@ from .messages import (
     SystemModelMessage,
     ToolModelMessage,
     UserModelMessage,
-    model_message_adapter,
+    pai_sdk_adapter,
 )
 
 _MESSAGE_TYPES = (
@@ -57,5 +57,5 @@ def standardize_prompt(
         if isinstance(item, _MESSAGE_TYPES):
             result.append(item)
         else:
-            result.append(model_message_adapter.validate_python(item))
+            result.append(pai_sdk_adapter.validate_python(item))
     return result

@@ -20,13 +20,13 @@ from __future__ import annotations
 import json
 from typing import Any, Sequence, Union
 
-from .messages import ModelMessage, model_messages_adapter
+from .messages import ModelMessage, pai_sdks_adapter
 
 
 def dump_messages(messages: Sequence[Any]) -> list[dict[str, Any]]:
     """Serialize messages (typed or dicts) to JSON-able dicts (camelCase wire
     format, AI SDK compatible). Bytes become base64; None fields are omitted."""
-    validated = model_messages_adapter.validate_python(list(messages))
+    validated = pai_sdks_adapter.validate_python(list(messages))
     return [
         message.model_dump(by_alias=True, exclude_none=True, mode="json")
         for message in validated
@@ -43,4 +43,4 @@ def load_messages(data: Union[str, Sequence[Any]]) -> list[ModelMessage]:
     ModelMessage instances, ready to pass to generate_text(messages=...)."""
     if isinstance(data, str):
         data = json.loads(data)
-    return model_messages_adapter.validate_python(list(data))
+    return pai_sdks_adapter.validate_python(list(data))

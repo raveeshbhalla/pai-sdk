@@ -13,7 +13,7 @@ from typing import Literal, Optional
 import pytest
 from pydantic import BaseModel
 
-from model_message import (
+from pai_sdk import (
     APICallError,
     ReasoningPart,
     generate_object,
@@ -22,8 +22,8 @@ from model_message import (
     stream_text,
     tool,
 )
-from model_message.providers import anthropic, google, openai
-from model_message.serialize import dump_messages_json, load_messages
+from pai_sdk.providers import anthropic, google, openai
+from pai_sdk.serialize import dump_messages_json, load_messages
 
 from test_live import MAX_TOKENS, MODELS, _skip_unless
 

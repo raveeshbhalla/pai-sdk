@@ -1,8 +1,8 @@
 import pytest
 from pydantic import BaseModel
 
-from model_message import generate_text, step_count_is, tool
-from model_message.messages import ToolModelMessage
+from pai_sdk import generate_text, step_count_is, tool
+from pai_sdk.messages import ToolModelMessage
 
 from conftest import FakeModel, text_step, tool_step
 

@@ -22,7 +22,7 @@ def _load_env_local() -> None:
 
 _load_env_local()
 
-from model_message import (
+from pai_sdk import (
     CallOptions,
     Finish,
     LanguageModel,
@@ -38,7 +38,7 @@ from model_message import (
     ToolInputStart,
     Usage,
 )
-from model_message.stream import ProviderStreamPart, ResponseMetadataPart
+from pai_sdk.stream import ProviderStreamPart, ResponseMetadataPart
 
 
 @dataclass

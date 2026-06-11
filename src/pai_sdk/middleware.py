@@ -607,7 +607,7 @@ def logging_middleware(
     finish reason + usage on the way out. For streams it counts the parts and
     logs the total on completion.
     """
-    log = logger if logger is not None else logging.getLogger("model_message.middleware")
+    log = logger if logger is not None else logging.getLogger("pai_sdk.middleware")
 
     def _describe_options(options: CallOptions, model: LanguageModel) -> str:
         return (

@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from model_message import generate_text
-from model_message.prompts import Prompt, PromptError, load_prompt
-from model_message.serialize import dump_messages, load_messages
-from model_message.typed import (
+from pai_sdk import generate_text
+from pai_sdk.prompts import Prompt, PromptError, load_prompt
+from pai_sdk.serialize import dump_messages, load_messages
+from pai_sdk.typed import (
     TemplateError,
     TypedSystemMessage,
     TypedUserMessage,
@@ -299,7 +299,7 @@ async def test_prompt_config_live_gepa_loop(tmp_path):
 # Simple-form configs (top-level system/user, output type shorthand)
 # ---------------------------------------------------------------------------
 
-from model_message.prompts import compile_output_shorthand  # noqa: E402
+from pai_sdk.prompts import compile_output_shorthand  # noqa: E402
 
 
 def test_output_shorthand_compiles():
@@ -381,7 +381,7 @@ def test_simple_form_dict_control_and_conflicts():
 async def test_unified_generate_and_stream_dispatch():
     from pydantic import BaseModel
 
-    from model_message import generate, stream
+    from pai_sdk import generate, stream
 
     class Out(BaseModel):
         answer: str
@@ -407,7 +407,7 @@ async def test_unified_generate_and_stream_dispatch():
 # The prompt-config JSON Schema (for editor validation of customer YAML)
 # ---------------------------------------------------------------------------
 
-from model_message.prompts import PROMPT_CONFIG_SCHEMA  # noqa: E402
+from pai_sdk.prompts import PROMPT_CONFIG_SCHEMA  # noqa: E402
 
 jsonschema = pytest.importorskip("jsonschema")
 
@@ -462,7 +462,7 @@ def test_schema_rejects_what_loader_rejects():
 
 
 def test_schema_file_ships_with_package():
-    from model_message.prompts import PROMPT_CONFIG_SCHEMA_PATH
+    from pai_sdk.prompts import PROMPT_CONFIG_SCHEMA_PATH
 
     assert PROMPT_CONFIG_SCHEMA_PATH.exists()
     assert PROMPT_CONFIG_SCHEMA["title"] == "pai-sdk prompt config"

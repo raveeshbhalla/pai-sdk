@@ -1,13 +1,13 @@
-"""Tests for model_message.registry — create_provider_registry and custom_provider."""
+"""Tests for pai_sdk.registry — create_provider_registry and custom_provider."""
 
 from __future__ import annotations
 
 import pytest
 
-from model_message.errors import NoSuchProviderError
-from model_message.provider import LanguageModel
-from model_message.providers import openrouter
-from model_message.registry import CustomProvider, ProviderRegistry, create_provider_registry, custom_provider
+from pai_sdk.errors import NoSuchProviderError
+from pai_sdk.provider import LanguageModel
+from pai_sdk.providers import openrouter
+from pai_sdk.registry import CustomProvider, ProviderRegistry, create_provider_registry, custom_provider
 
 # ---------------------------------------------------------------------------
 # Helpers

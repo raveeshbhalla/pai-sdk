@@ -2,7 +2,7 @@ import base64
 
 import pytest
 
-from model_message import (
+from pai_sdk import (
     AssistantModelMessage,
     ImagePart,
     SystemModelMessage,
@@ -11,15 +11,15 @@ from model_message import (
     ToolModelMessage,
     ToolResultPart,
     UserModelMessage,
-    model_message_adapter,
-    model_messages_adapter,
+    pai_sdk_adapter,
+    pai_sdks_adapter,
 )
-from model_message._prompt import standardize_prompt
-from model_message.errors import InvalidPromptError
+from pai_sdk._prompt import standardize_prompt
+from pai_sdk.errors import InvalidPromptError
 
 
 def test_dict_messages_validate():
-    msg = model_message_adapter.validate_python(
+    msg = pai_sdk_adapter.validate_python(
         {"role": "user", "content": [{"type": "text", "text": "hi"}]}
     )
     assert isinstance(msg, UserModelMessage)
@@ -42,12 +42,12 @@ def test_camel_case_wire_format_round_trip():
         "input": {"city": "Paris"},
     }
     # round-trip back from camelCase
-    restored = model_message_adapter.validate_python(dumped)
+    restored = pai_sdk_adapter.validate_python(dumped)
     assert restored.content[0].tool_call_id == "call_1"
 
 
 def test_tool_result_output_union():
-    msg = model_message_adapter.validate_python(
+    msg = pai_sdk_adapter.validate_python(
         {
             "role": "tool",
             "content": [
@@ -98,7 +98,7 @@ def test_standardize_messages_mixed():
 
 
 def test_messages_list_adapter():
-    messages = model_messages_adapter.validate_python(
+    messages = pai_sdks_adapter.validate_python(
         [
             {"role": "system", "content": "s"},
             {"role": "user", "content": "u"},

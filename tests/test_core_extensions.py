@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator
 
 import pytest
 
-from model_message import (
+from pai_sdk import (
     AssistantModelMessage,
     CallOptions,
     CallWarning,
@@ -41,11 +41,11 @@ from model_message import (
     UrlSourcePart,
     Usage,
     generate_text,
-    model_message_adapter,
+    pai_sdk_adapter,
     stream_text,
 )
-from model_message.messages import ErrorTextOutput, TextContentItem
-from model_message.stream import (
+from pai_sdk.messages import ErrorTextOutput, TextContentItem
+from pai_sdk.stream import (
     Finish as StreamFinish,
     ProviderStreamPart,
     RawPart,
@@ -89,7 +89,7 @@ def _finish() -> StreamFinish:
 
 
 def test_source_part_round_trip():
-    msg = model_message_adapter.validate_python(
+    msg = pai_sdk_adapter.validate_python(
         {
             "role": "assistant",
             "content": [
@@ -202,7 +202,7 @@ async def test_generate_result_files():
 
 @pytest.mark.asyncio
 async def test_stream_result_files():
-    from model_message.stream import FilePartEvent
+    from pai_sdk.stream import FilePartEvent
 
     model = ScriptedStreamModel(
         parts=[
@@ -225,7 +225,7 @@ async def test_stream_result_files():
 
 @pytest.mark.asyncio
 async def test_provider_executed_tool_not_run_locally():
-    from model_message import tool
+    from pai_sdk import tool
     from tests.conftest import FakeModel
 
     executed = {"count": 0}
@@ -405,7 +405,7 @@ async def test_stream_request_echo():
         ]
     )
     result = stream_text(model=model, prompt="hi")
-    from model_message.stream import FinishStep
+    from pai_sdk.stream import FinishStep
 
     finish_step_request = None
     async for part in result.full_stream:
@@ -473,7 +473,7 @@ def test_file_id_data_validation_and_serialization():
 
 
 def test_v6_content_output_items_round_trip():
-    msg = model_message_adapter.validate_python(
+    msg = pai_sdk_adapter.validate_python(
         {
             "role": "tool",
             "content": [
@@ -523,7 +523,7 @@ def test_v6_content_output_items_round_trip():
 
 
 def test_tool_approval_request_in_assistant_content():
-    msg = model_message_adapter.validate_python(
+    msg = pai_sdk_adapter.validate_python(
         {
             "role": "assistant",
             "content": [
@@ -547,7 +547,7 @@ def test_tool_approval_request_in_assistant_content():
 
 
 def test_tool_approval_response_in_tool_content():
-    msg = model_message_adapter.validate_python(
+    msg = pai_sdk_adapter.validate_python(
         {
             "role": "tool",
             "content": [
@@ -598,9 +598,9 @@ async def test_loop_inert_with_approval_request():
 async def test_streaming_provider_metadata_via_finish_part():
     """Providers can attach provider_metadata to their Finish part; the engine
     copies it onto the step and FinishStep."""
-    from model_message import stream_text
-    from model_message.provider import CallOptions
-    from model_message.stream import Finish, ResponseMetadataPart, TextDelta, TextEnd, TextStart
+    from pai_sdk import stream_text
+    from pai_sdk.provider import CallOptions
+    from pai_sdk.stream import Finish, ResponseMetadataPart, TextDelta, TextEnd, TextStart
 
     from conftest import FakeModel, text_step
 

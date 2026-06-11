@@ -1,6 +1,6 @@
 """Provider factories.
 
-    from model_message.providers import openai, anthropic, google, openrouter
+    from pai_sdk.providers import openai, anthropic, google, openrouter
 
     model = openai("gpt-5.4")              # OpenAI Responses API (default)
     model = openai.chat("gpt-5.4")         # OpenAI Chat Completions API

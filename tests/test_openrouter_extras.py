@@ -9,9 +9,9 @@ import json
 import httpx
 import pytest
 
-from model_message import generate_text
-from model_message.messages import ReasoningPart
-from model_message.providers.openrouter import OpenRouterLanguageModel
+from pai_sdk import generate_text
+from pai_sdk.messages import ReasoningPart
+from pai_sdk.providers.openrouter import OpenRouterLanguageModel
 
 openai_sdk = pytest.importorskip("openai")
 

@@ -30,7 +30,7 @@ all = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/model_message"]
+packages = ["src/pai_sdk"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

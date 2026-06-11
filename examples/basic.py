@@ -7,8 +7,8 @@ import asyncio
 
 from pydantic import BaseModel
 
-from model_message import generate_text, step_count_is, stream_text, tool
-from model_message.providers import anthropic, google, openai, openrouter  # noqa: F401
+from pai_sdk import generate_text, step_count_is, stream_text, tool
+from pai_sdk.providers import anthropic, google, openai, openrouter  # noqa: F401
 
 MODEL = anthropic("claude-opus-4-8")
 # MODEL = openai("gpt-5.4")                        # Responses API

@@ -6,15 +6,15 @@ import pytest
 from pydantic import BaseModel
 
 from conftest import FakeModel
-from model_message import (
+from pai_sdk import (
     ProviderResult,
     ResponseMetadata,
     TextPart,
     Usage,
 )
-from model_message.errors import NoObjectGeneratedError
-from model_message.generate import generate_text, stream_text
-from model_message.output import (
+from pai_sdk.errors import NoObjectGeneratedError
+from pai_sdk.generate import generate_text, stream_text
+from pai_sdk.output import (
     GenerateObjectResult,
     Output,
     StreamObjectResult,

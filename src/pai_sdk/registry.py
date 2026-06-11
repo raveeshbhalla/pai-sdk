@@ -2,8 +2,8 @@
 
 Usage::
 
-    from model_message.providers import openai, anthropic
-    from model_message.registry import create_provider_registry, custom_provider
+    from pai_sdk.providers import openai, anthropic
+    from pai_sdk.registry import create_provider_registry, custom_provider
 
     registry = create_provider_registry({
         "openai": openai,
@@ -27,7 +27,7 @@ from .provider import LanguageModel
 
 class ProviderRegistry:
     """A registry of named providers that resolves ``<prefix><sep><model-id>``
-    strings into :class:`~model_message.provider.LanguageModel` instances.
+    strings into :class:`~pai_sdk.provider.LanguageModel` instances.
 
     Instantiate via :func:`create_provider_registry`.
     """
@@ -45,7 +45,7 @@ class ProviderRegistry:
 
         Returns ``(provider_prefix, model_id)``.
 
-        Raises :class:`~model_message.errors.NoSuchProviderError` when the
+        Raises :class:`~pai_sdk.errors.NoSuchProviderError` when the
         separator is absent.
         """
         sep = self._separator
@@ -87,7 +87,7 @@ class ProviderRegistry:
 
         Delegates to ``provider.embedding(model_id)`` when the resolved
         provider exposes an ``embedding`` attribute; raises
-        :class:`~model_message.errors.NoSuchProviderError` otherwise.
+        :class:`~pai_sdk.errors.NoSuchProviderError` otherwise.
         """
         prefix, model_id = self._split(id)
         provider = self._resolve_provider(prefix)
@@ -118,7 +118,7 @@ class CustomProvider:
     ``language_models`` maps short alias strings to already-instantiated
     :class:`LanguageModel` objects (e.g. ``{"fast": openai("gpt-5.4-mini")}``).
     An optional *fallback_provider* is called when the id is not found in the
-    dict.  If neither lookup succeeds a :class:`~model_message.errors.NoSuchProviderError`
+    dict.  If neither lookup succeeds a :class:`~pai_sdk.errors.NoSuchProviderError`
     listing the known ids is raised.
 
     Instantiate via :func:`custom_provider`.
@@ -146,7 +146,7 @@ class CustomProvider:
 
         1. ``language_models[model_id]``
         2. ``fallback_provider(model_id)`` (if provided)
-        3. :class:`~model_message.errors.NoSuchProviderError`
+        3. :class:`~pai_sdk.errors.NoSuchProviderError`
         """
         if model_id in self._language_models:
             return self._language_models[model_id]
@@ -170,7 +170,7 @@ class CustomProvider:
         1. ``embedding_models[model_id]``
         2. ``fallback_provider.embedding(model_id)`` (if the fallback exposes
            an ``embedding`` attribute)
-        3. :class:`~model_message.errors.NoSuchProviderError`
+        3. :class:`~pai_sdk.errors.NoSuchProviderError`
         """
         if model_id in self._embedding_models:
             return self._embedding_models[model_id]
@@ -208,7 +208,7 @@ def create_provider_registry(
     """Create a :class:`ProviderRegistry` from a dict of named providers.
 
     Each value in *providers* must be callable with a model-id string and
-    return a :class:`~model_message.provider.LanguageModel` — either one of
+    return a :class:`~pai_sdk.provider.LanguageModel` — either one of
     the built-in provider factory instances (``openai``, ``anthropic``, …) or
     a :class:`CustomProvider` created by :func:`custom_provider`.
 
@@ -217,8 +217,8 @@ def create_provider_registry(
 
     Example::
 
-        from model_message.providers import openai, anthropic
-        from model_message.registry import create_provider_registry, custom_provider
+        from pai_sdk.providers import openai, anthropic
+        from pai_sdk.registry import create_provider_registry, custom_provider
 
         registry = create_provider_registry(
             {
@@ -244,7 +244,7 @@ def custom_provider(
     """Create a :class:`CustomProvider` for use inside a registry or standalone.
 
     *language_models* maps short alias strings to pre-configured
-    :class:`~model_message.provider.LanguageModel` instances — useful for
+    :class:`~pai_sdk.provider.LanguageModel` instances — useful for
     giving friendly names to middleware-wrapped or pre-configured models.
 
     *embedding_models* maps ids to pre-configured embedding model objects
@@ -255,8 +255,8 @@ def custom_provider(
 
     Example::
 
-        from model_message.providers import openai
-        from model_message.registry import custom_provider, create_provider_registry
+        from pai_sdk.providers import openai
+        from pai_sdk.registry import custom_provider, create_provider_registry
 
         aliases = custom_provider(
             language_models={

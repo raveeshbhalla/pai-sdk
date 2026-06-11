@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 
-from model_message import (
+from pai_sdk import (
     CallOptions,
     Finish,
     ProviderResult,
@@ -20,7 +20,7 @@ from model_message import (
     stream_text,
     tool,
 )
-from model_message.middleware import (
+from pai_sdk.middleware import (
     LanguageModelMiddleware,
     default_settings_middleware,
     extract_reasoning_middleware,
@@ -28,7 +28,7 @@ from model_message.middleware import (
     simulate_streaming_middleware,
     wrap_language_model,
 )
-from model_message.stream import (
+from pai_sdk.stream import (
     ReasoningDelta,
     ReasoningEnd,
     ReasoningStart,
@@ -43,7 +43,7 @@ from conftest import FakeModel, text_step, tool_step
 
 
 def _opts(prompt="hi"):
-    from model_message import UserModelMessage
+    from pai_sdk import UserModelMessage
 
     return CallOptions(prompt=[UserModelMessage(content=prompt)])
 

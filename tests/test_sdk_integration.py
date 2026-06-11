@@ -11,10 +11,10 @@ import json
 import httpx
 import pytest
 
-from model_message import generate_text, step_count_is, stream_text, tool
-from model_message.providers.anthropic import AnthropicLanguageModel
-from model_message.providers.openai_chat import OpenAIChatLanguageModel
-from model_message.providers.openai_responses import OpenAIResponsesLanguageModel
+from pai_sdk import generate_text, step_count_is, stream_text, tool
+from pai_sdk.providers.anthropic import AnthropicLanguageModel
+from pai_sdk.providers.openai_chat import OpenAIChatLanguageModel
+from pai_sdk.providers.openai_responses import OpenAIResponsesLanguageModel
 
 anthropic_sdk = pytest.importorskip("anthropic")
 openai_sdk = pytest.importorskip("openai")

@@ -13,7 +13,7 @@ import json
 import httpx
 import pytest
 
-from model_message import (
+from pai_sdk import (
     AssistantModelMessage,
     FileIdData,
     FilePart,
@@ -23,9 +23,9 @@ from model_message import (
     step_count_is,
     stream_text,
 )
-from model_message._prompt import standardize_prompt
-from model_message.provider import CallOptions
-from model_message.providers.anthropic import AnthropicLanguageModel
+from pai_sdk._prompt import standardize_prompt
+from pai_sdk.provider import CallOptions
+from pai_sdk.providers.anthropic import AnthropicLanguageModel
 
 anthropic_sdk = pytest.importorskip("anthropic")
 
@@ -297,7 +297,7 @@ async def test_usage_details_provider_metadata_and_request_echo():
 
 def test_request_echo_strips_headers():
     model = AnthropicLanguageModel(model_id="claude-opus-4-8")
-    from model_message.providers._util import request_echo
+    from pai_sdk.providers._util import request_echo
 
     request = model._request(
         options(standardize_prompt(prompt="hi"), headers={"x-test": "1"})

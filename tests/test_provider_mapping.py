@@ -4,7 +4,7 @@ import base64
 
 import pytest
 
-from model_message import (
+from pai_sdk import (
     AssistantModelMessage,
     FilePart,
     ImagePart,
@@ -16,17 +16,17 @@ from model_message import (
     ToolResultPart,
     UserModelMessage,
 )
-from model_message._prompt import standardize_prompt
-from model_message.provider import CallOptions, FunctionToolSpec
-from model_message.providers import resolve_model_string
-from model_message.providers.anthropic import AnthropicLanguageModel
-from model_message.providers.google import GoogleLanguageModel, convert_to_gemini_contents
-from model_message.providers.openai_chat import OpenAIChatLanguageModel, convert_to_chat_messages
-from model_message.providers.openai_responses import (
+from pai_sdk._prompt import standardize_prompt
+from pai_sdk.provider import CallOptions, FunctionToolSpec
+from pai_sdk.providers import resolve_model_string
+from pai_sdk.providers.anthropic import AnthropicLanguageModel
+from pai_sdk.providers.google import GoogleLanguageModel, convert_to_gemini_contents
+from pai_sdk.providers.openai_chat import OpenAIChatLanguageModel, convert_to_chat_messages
+from pai_sdk.providers.openai_responses import (
     OpenAIResponsesLanguageModel,
     convert_to_responses_input,
 )
-from model_message.errors import NoSuchProviderError
+from pai_sdk.errors import NoSuchProviderError
 
 PNG = b"\x89PNG\r\n\x1a\nfake"
 PNG_B64 = base64.b64encode(PNG).decode()
@@ -215,7 +215,7 @@ def test_anthropic_pdf_document():
 
 
 def test_anthropic_thinking_replay():
-    from model_message.messages import ReasoningPart
+    from pai_sdk.messages import ReasoningPart
 
     model = AnthropicLanguageModel(model_id="claude-opus-4-8")
     request = model._request(

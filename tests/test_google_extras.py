@@ -14,9 +14,9 @@ import pytest
 
 from google.genai import types as gtypes
 
-from model_message.messages import FileIdData, FilePart, ImagePart, TextPart, UrlSourcePart, UserModelMessage
-from model_message.provider import CallOptions, FunctionToolSpec
-from model_message.providers.google import (
+from pai_sdk.messages import FileIdData, FilePart, ImagePart, TextPart, UrlSourcePart, UserModelMessage
+from pai_sdk.provider import CallOptions, FunctionToolSpec
+from pai_sdk.providers.google import (
     GoogleLanguageModel,
     _grounding_sources,
     _map_usage,
@@ -24,8 +24,8 @@ from model_message.providers.google import (
     _sanitize_contents_for_request,
     convert_to_gemini_contents,
 )
-from model_message.results import InputTokenDetails, OutputTokenDetails
-from model_message.stream import RawPart, SourceStreamPart
+from pai_sdk.results import InputTokenDetails, OutputTokenDetails
+from pai_sdk.stream import RawPart, SourceStreamPart
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ async def test_do_generate_grounding_appended_to_content():
     fake_client.aio = fake_aio
     model._client_cache = fake_client
 
-    from model_message._prompt import standardize_prompt
+    from pai_sdk._prompt import standardize_prompt
     opts = CallOptions(prompt=standardize_prompt(prompt="tell me"))
     result = await model.do_generate(opts)
 
@@ -270,7 +270,7 @@ async def test_request_echo_in_do_generate():
     fake_client.aio = fake_aio
     model._client_cache = fake_client
 
-    from model_message._prompt import standardize_prompt
+    from pai_sdk._prompt import standardize_prompt
     opts = CallOptions(
         prompt=standardize_prompt(system="Be helpful", prompt="hi"),
         max_output_tokens=50,
@@ -302,7 +302,7 @@ async def test_request_echo_bytes_sanitized():
     model._client_cache = fake_client
 
     png = b"\x89PNG\r\n\x1a\nfake"
-    from model_message._prompt import standardize_prompt
+    from pai_sdk._prompt import standardize_prompt
     opts = CallOptions(
         prompt=[
             UserModelMessage(content=[ImagePart(image=png, media_type="image/png")])
@@ -344,7 +344,7 @@ async def test_include_raw_chunks_yields_raw_parts():
     fake_client.aio.models = fake_aio_stream
     model._client_cache = fake_client
 
-    from model_message._prompt import standardize_prompt
+    from pai_sdk._prompt import standardize_prompt
     opts = CallOptions(
         prompt=standardize_prompt(prompt="hi"),
         include_raw_chunks=True,
@@ -379,7 +379,7 @@ async def test_no_raw_chunks_by_default():
     fake_client.aio.models = fake_aio_stream
     model._client_cache = fake_client
 
-    from model_message._prompt import standardize_prompt
+    from pai_sdk._prompt import standardize_prompt
     opts = CallOptions(prompt=standardize_prompt(prompt="hi"))
 
     parts = []
@@ -434,7 +434,7 @@ async def test_do_stream_grounding_sources_deduped():
     fake_client.aio.models = fake_aio_stream
     model._client_cache = fake_client
 
-    from model_message._prompt import standardize_prompt
+    from pai_sdk._prompt import standardize_prompt
     opts = CallOptions(prompt=standardize_prompt(prompt="search this"))
 
     parts = []
@@ -478,7 +478,7 @@ async def test_provider_metadata_with_grounding():
     fake_client.aio = fake_aio
     model._client_cache = fake_client
 
-    from model_message._prompt import standardize_prompt
+    from pai_sdk._prompt import standardize_prompt
     opts = CallOptions(prompt=standardize_prompt(prompt="search"))
     result = await model.do_generate(opts)
 
@@ -503,7 +503,7 @@ async def test_provider_metadata_none_when_no_extra_info():
     fake_client.aio = fake_aio
     model._client_cache = fake_client
 
-    from model_message._prompt import standardize_prompt
+    from pai_sdk._prompt import standardize_prompt
     opts = CallOptions(prompt=standardize_prompt(prompt="hi"))
     result = await model.do_generate(opts)
 
@@ -532,8 +532,8 @@ async def test_stream_request_echo_in_response_metadata():
     fake_client.aio.models = fake_aio_stream
     model._client_cache = fake_client
 
-    from model_message._prompt import standardize_prompt
-    from model_message.stream import ResponseMetadataPart as RMP
+    from pai_sdk._prompt import standardize_prompt
+    from pai_sdk.stream import ResponseMetadataPart as RMP
     opts = CallOptions(prompt=standardize_prompt(prompt="hi"), max_output_tokens=10)
 
     parts = []

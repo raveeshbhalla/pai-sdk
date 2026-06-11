@@ -12,10 +12,10 @@ import json
 import httpx
 import pytest
 
-from model_message import generate_text
-from model_message._prompt import standardize_prompt
-from model_message.provider import CallOptions, FunctionToolSpec
-from model_message.providers import (
+from pai_sdk import generate_text
+from pai_sdk._prompt import standardize_prompt
+from pai_sdk.provider import CallOptions, FunctionToolSpec
+from pai_sdk.providers import (
     azure,
     bedrock,
     create_azure,
@@ -24,16 +24,16 @@ from model_message.providers import (
     resolve_model_string,
     vertex,
 )
-from model_message.providers.anthropic import AnthropicLanguageModel
-from model_message.providers.azure import (
+from pai_sdk.providers.anthropic import AnthropicLanguageModel
+from pai_sdk.providers.azure import (
     AzureChatLanguageModel,
     AzureResponsesLanguageModel,
 )
-from model_message.providers.bedrock import BedrockAnthropicLanguageModel
-from model_message.providers.google import GoogleLanguageModel
-from model_message.providers.openai_chat import OpenAIChatLanguageModel
-from model_message.providers.openai_responses import OpenAIResponsesLanguageModel
-from model_message.providers.vertex import (
+from pai_sdk.providers.bedrock import BedrockAnthropicLanguageModel
+from pai_sdk.providers.google import GoogleLanguageModel
+from pai_sdk.providers.openai_chat import OpenAIChatLanguageModel
+from pai_sdk.providers.openai_responses import OpenAIResponsesLanguageModel
+from pai_sdk.providers.vertex import (
     VertexAnthropicLanguageModel,
     VertexGoogleLanguageModel,
 )

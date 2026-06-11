@@ -157,14 +157,14 @@ def _normalize_messages(messages: Sequence[Any]) -> list[ModelMessage]:
     """Coerce a prepare_step `messages` override (ModelMessage instances or
     plain dicts) into a list of ModelMessage, mirroring standardize_prompt."""
     from ._prompt import _MESSAGE_TYPES
-    from .messages import model_message_adapter
+    from .messages import pai_sdk_adapter
 
     out: list[ModelMessage] = []
     for item in messages:
         if isinstance(item, _MESSAGE_TYPES):
             out.append(item)
         else:
-            out.append(model_message_adapter.validate_python(item))
+            out.append(pai_sdk_adapter.validate_python(item))
     return out
 
 

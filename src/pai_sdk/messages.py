@@ -391,7 +391,7 @@ ModelMessage = Annotated[
     Field(discriminator="role"),
 ]
 
-model_message_adapter: TypeAdapter[ModelMessage] = TypeAdapter(ModelMessage)
-model_messages_adapter: TypeAdapter[list[ModelMessage]] = TypeAdapter(
+pai_sdk_adapter: TypeAdapter[ModelMessage] = TypeAdapter(ModelMessage)
+pai_sdks_adapter: TypeAdapter[list[ModelMessage]] = TypeAdapter(
     list[ModelMessage]
 )

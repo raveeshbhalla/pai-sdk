@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator
 import pytest
 from pydantic import BaseModel
 
-from model_message import (
+from pai_sdk import (
     CallOptions,
     ProviderResult,
     ResponseMetadata,
@@ -19,10 +19,10 @@ from model_message import (
     stream_text,
     tool,
 )
-from model_message.errors import AbortError, GenerationTimeoutError
-from model_message.generate import PrepareStepResult
-from model_message.stream import ProviderStreamPart, TextDelta, TextEnd, TextStart
-from model_message.transforms import smooth_stream
+from pai_sdk.errors import AbortError, GenerationTimeoutError
+from pai_sdk.generate import PrepareStepResult
+from pai_sdk.stream import ProviderStreamPart, TextDelta, TextEnd, TextStart
+from pai_sdk.transforms import smooth_stream
 
 from conftest import FakeModel, text_step, tool_step
 

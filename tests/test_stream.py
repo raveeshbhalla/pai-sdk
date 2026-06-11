@@ -1,6 +1,6 @@
 import asyncio
 
-from model_message import step_count_is, stream_text, tool
+from pai_sdk import step_count_is, stream_text, tool
 
 from conftest import FakeModel, text_step, tool_step
 
