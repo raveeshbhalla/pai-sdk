@@ -60,6 +60,25 @@ class NoSuchProviderError(AISDKError):
     """A 'provider/model' string referenced an unknown provider."""
 
 
+class NoObjectGeneratedError(AISDKError):
+    """The model output could not be parsed/validated into an object."""
+
+    def __init__(
+        self,
+        message: str = "No object generated.",
+        *,
+        text: Optional[str] = None,
+        cause: Optional[BaseException] = None,
+        finish_reason: Optional[str] = None,
+        usage: Any = None,
+    ) -> None:
+        super().__init__(message)
+        self.text = text
+        self.cause = cause
+        self.finish_reason = finish_reason
+        self.usage = usage
+
+
 class MissingDependencyError(AISDKError):
     """An optional provider SDK is not installed."""
 

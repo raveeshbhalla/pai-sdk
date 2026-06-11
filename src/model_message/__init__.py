@@ -11,12 +11,14 @@ for Python, with OpenAI, Anthropic, Google Gemini, and OpenRouter providers.
     print(result.text)
 """
 
+from .agent import Agent
 from .errors import (
     AISDKError,
     APICallError,
     InvalidPromptError,
     InvalidToolInputError,
     MissingDependencyError,
+    NoObjectGeneratedError,
     NoSuchProviderError,
     NoSuchToolError,
 )
@@ -55,6 +57,14 @@ from .messages import (
     UserModelMessage,
     model_message_adapter,
     model_messages_adapter,
+)
+from .output import (
+    GenerateObjectResult,
+    Output,
+    StreamObjectResult,
+    generate_object,
+    parse_partial_json,
+    stream_object,
 )
 from .provider import CallOptions, FunctionToolSpec, LanguageModel, ProviderResult
 from .results import (
@@ -97,6 +107,13 @@ __all__ = [
     "generate_text",
     "stream_text",
     "StreamTextResult",
+    "generate_object",
+    "stream_object",
+    "GenerateObjectResult",
+    "StreamObjectResult",
+    "Output",
+    "parse_partial_json",
+    "Agent",
     "tool",
     "Tool",
     "ToolSet",
@@ -169,6 +186,7 @@ __all__ = [
     "AISDKError",
     "APICallError",
     "NoSuchToolError",
+    "NoObjectGeneratedError",
     "InvalidToolInputError",
     "InvalidPromptError",
     "NoSuchProviderError",

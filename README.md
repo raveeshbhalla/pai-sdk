@@ -3,12 +3,13 @@
 [Vercel AI SDK](https://ai-sdk.dev) ergonomics for Python: the `ModelMessage`
 type family, `generate_text()`, and `stream_text()` — one message format and
 one call interface across **OpenAI** (Chat Completions *and* Responses API),
-**Anthropic** (Messages API), **Google Gemini** (`google-genai`), and
-**OpenRouter**, including multimodal input and multi-step tool calling.
+**Anthropic** (Messages API), **Google Gemini** (`google-genai`),
+**OpenRouter**, **Amazon Bedrock**, **Google Vertex AI**, and
+**Azure OpenAI**, including multimodal input and multi-step tool calling.
 
 ```bash
 pip install "model-message[all]"        # all providers
-pip install "model-message[anthropic]"  # or pick: openai / anthropic / google
+pip install "model-message[anthropic]"  # or pick: openai / anthropic / google / bedrock / vertex
 ```
 
 ## Quick start
@@ -35,7 +36,9 @@ API keys come from the environment: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 ## Choosing a model
 
 ```python
-from model_message.providers import openai, anthropic, google, openrouter
+from model_message.providers import (
+    openai, anthropic, google, openrouter, bedrock, vertex, azure,
+)
 
 openai("gpt-5.4")                       # OpenAI Responses API (default)
 openai.chat("gpt-5.4")                  # OpenAI Chat Completions API
@@ -43,18 +46,49 @@ anthropic("claude-opus-4-8")            # Anthropic Messages API
 google("gemini-2.5-flash")              # Gemini
 openrouter("anthropic/claude-opus-4.6") # OpenRouter (Chat Completions shape)
 
+# Cloud-hosted variants:
+bedrock("anthropic.claude-opus-4-8")    # Claude on Amazon Bedrock
+vertex("gemini-2.5-flash")              # Gemini on Google Vertex AI
+vertex.anthropic("claude-opus-4-8")     # Claude on Vertex AI
+azure("my-deployment")                  # Azure OpenAI (Responses API)
+azure.chat("my-deployment")             # Azure OpenAI (Chat Completions)
+
 # Or plain strings, AI SDK gateway-style:
 await generate_text(model="anthropic/claude-opus-4-8", prompt="...")
 await generate_text(model="openrouter/google/gemini-2.5-flash", prompt="...")
+await generate_text(model="bedrock/anthropic.claude-opus-4-8", prompt="...")
+await generate_text(model="vertex/gemini-2.5-flash", prompt="...")
+await generate_text(model="azure/my-deployment", prompt="...")
 ```
+
+The cloud providers reuse the underlying Anthropic / Gemini / OpenAI request
+mappings — only the SDK client differs (AWS-signed, Vertex-scoped, or
+Azure-deployment-scoped). Credentials come from the environment:
+
+- **Bedrock** — `AWS_REGION` plus the standard AWS credential chain (or pass
+  `aws_region` / `aws_access_key` / `aws_secret_key` / `aws_session_token`).
+  Model ids carry the `anthropic.` prefix and are passed through verbatim.
+- **Vertex** — `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` (default
+  `us-central1`); Anthropic models use the `/anthropic` subpath via
+  `vertex.anthropic(...)`.
+- **Azure** — `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and
+  `OPENAI_API_VERSION`; the model id is the Azure *deployment* name.
+
+Install the matching extras: `model-message[bedrock]` or
+`model-message[vertex]` (Azure ships with the base `openai` extra).
 
 Configured provider instances:
 
 ```python
-from model_message.providers import create_openai, create_openrouter
+from model_message.providers import (
+    create_openai, create_openrouter, create_bedrock, create_vertex, create_azure,
+)
 
 my_openai = create_openai(api_key="sk-...", base_url="https://proxy.internal/v1")
 my_openrouter = create_openrouter(app_url="https://myapp.com", app_title="My App")
+my_bedrock = create_bedrock(aws_region="us-east-1")
+my_vertex = create_vertex(project="my-gcp-project", location="us-east5")
+my_azure = create_azure(azure_endpoint="https://my.openai.azure.com", api_version="2024-10-21")
 ```
 
 ## ModelMessage

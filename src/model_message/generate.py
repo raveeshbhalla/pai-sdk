@@ -274,17 +274,22 @@ async def generate_text(
     headers: Optional[dict[str, str]] = None,
     stop_when: Union[StopCondition, Sequence[StopCondition], None] = None,
     provider_options: Optional[dict[str, dict[str, Any]]] = None,
+    output: Optional[Any] = None,
     on_step_finish: Optional[Callable[[StepResult], Any]] = None,
 ) -> GenerateTextResult:
     """Generate text (and tool calls) — the AI SDK generateText().
 
     With tools that have `execute`, runs the multi-step tool loop until
     `stop_when` is met (default: a single step, like the AI SDK).
+
+    Pass `output=Output.object(...)` for structured output: it sets
+    CallOptions.response_format and parses the final text into `result.output`.
     """
     resolved = _resolve_model(model)
     working_messages = standardize_prompt(system=system, prompt=prompt, messages=messages)
     stop = stop_when if stop_when is not None else step_count_is(1)
     specs = _tool_specs(tools, active_tools)
+    response_format = output.response_format() if output is not None else None
 
     steps: list[StepResult] = []
     generated_messages: list[ModelMessage] = []
@@ -303,6 +308,7 @@ async def generate_text(
             seed=seed,
             tools=specs,
             tool_choice=tool_choice,
+            response_format=response_format,
             headers=headers,
             provider_options=provider_options or {},
         )
@@ -347,6 +353,18 @@ async def generate_text(
         body=final.response.body,
         messages=generated_messages,
     )
+
+    parsed_output: Any = None
+    if output is not None and getattr(output, "type", None) == "object":
+        from .errors import NoObjectGeneratedError
+
+        try:
+            parsed_output = output.parse(final.text)
+        except NoObjectGeneratedError as exc:
+            exc.finish_reason = final.finish_reason
+            exc.usage = final.usage
+            raise
+
     return GenerateTextResult(
         text=final.text,
         content=final.content,
@@ -362,6 +380,7 @@ async def generate_text(
         response=response,
         warnings=final.warnings,
         provider_metadata=final.provider_metadata,
+        output=parsed_output,
     )
 
 
@@ -390,12 +409,14 @@ class StreamTextResult:
         on_error: Optional[Callable[[Any], Any]] = None,
         on_step_finish: Optional[Callable[[StepResult], Any]] = None,
         on_finish: Optional[Callable[["StreamTextResult"], Any]] = None,
+        output: Optional[Any] = None,
     ) -> None:
         self._run_step_loop = run_step_loop
         self._on_chunk = on_chunk
         self._on_error = on_error
         self._on_step_finish_cb = on_step_finish
         self._on_finish = on_finish
+        self._output = output
 
         self._parts: list[TextStreamPart] = []
         self._cond: Optional[asyncio.Condition] = None
@@ -572,6 +593,56 @@ class StreamTextResult:
 
         return get()
 
+    # -- structured output ---------------------------------------------------
+
+    @property
+    def output(self) -> Awaitable[Any]:
+        """Parse the final text into the structured object. Raises
+        NoObjectGeneratedError on parse/validation failure."""
+
+        async def get() -> Any:
+            from .errors import NoObjectGeneratedError
+
+            final = await self._final_step()
+            if self._output is None or getattr(self._output, "type", None) != "object":
+                return None
+            try:
+                return self._output.parse(final.text)
+            except NoObjectGeneratedError as exc:
+                exc.finish_reason = final.finish_reason
+                exc.usage = final.usage
+                raise
+
+        return get()
+
+    @property
+    def partial_output_stream(self) -> AsyncIterator[Any]:
+        """Yield successively-parsed partial objects as text accumulates.
+
+        Accumulates text deltas, runs parse_partial_json, and yields the parsed
+        value whenever it changes (raw dicts — partials are not validated
+        against the schema)."""
+
+        async def gen() -> AsyncIterator[Any]:
+            from .output import parse_partial_json
+
+            accumulated = ""
+            previous: Any = None
+            has_previous = False
+            async for part in self._subscribe():
+                if not isinstance(part, TextDelta):
+                    continue
+                accumulated += part.text
+                value, state = parse_partial_json(accumulated)
+                if state == "failed-parse" or value is None:
+                    continue
+                if not has_previous or value != previous:
+                    previous = value
+                    has_previous = True
+                    yield value
+
+        return gen()
+
 
 def stream_text(
     *,
@@ -594,6 +665,7 @@ def stream_text(
     headers: Optional[dict[str, str]] = None,
     stop_when: Union[StopCondition, Sequence[StopCondition], None] = None,
     provider_options: Optional[dict[str, dict[str, Any]]] = None,
+    output: Optional[Any] = None,
     on_chunk: Optional[Callable[[TextStreamPart], Any]] = None,
     on_error: Optional[Callable[[Any], Any]] = None,
     on_step_finish: Optional[Callable[[StepResult], Any]] = None,
@@ -604,11 +676,16 @@ def stream_text(
     Returns immediately; work starts on first consumption/await. Errors are
     emitted as `error` parts on full_stream (and raised when awaiting
     aggregate properties).
+
+    Pass `output=Output.object(...)` for structured output: it sets
+    CallOptions.response_format and enables `partial_output_stream` and the
+    awaitable `output`.
     """
     resolved = _resolve_model(model)
     initial_messages = standardize_prompt(system=system, prompt=prompt, messages=messages)
     stop = stop_when if stop_when is not None else step_count_is(1)
     specs = _tool_specs(tools, active_tools)
+    response_format = output.response_format() if output is not None else None
 
     async def run_step_loop(result: StreamTextResult) -> None:
         working_messages = list(initial_messages)
@@ -627,6 +704,7 @@ def stream_text(
                 seed=seed,
                 tools=specs,
                 tool_choice=tool_choice,
+                response_format=response_format,
                 headers=headers,
                 provider_options=provider_options or {},
             )
@@ -761,6 +839,7 @@ def stream_text(
         on_error=on_error,
         on_step_finish=on_step_finish,
         on_finish=on_finish,
+        output=output,
     )
 
 

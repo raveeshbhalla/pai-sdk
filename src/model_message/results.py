@@ -106,6 +106,9 @@ class GenerateTextResult:
     response: ResponseMetadata
     warnings: list[str]
     provider_metadata: Optional[dict[str, dict[str, Any]]] = None
+    # Parsed structured output when an object output spec was given (AI SDK
+    # experimental_output). None otherwise.
+    output: Any = None
 
 
 ToolChoice = Union[

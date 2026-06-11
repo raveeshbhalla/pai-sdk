@@ -19,7 +19,13 @@ dependencies = [
 openai = ["openai>=1.60"]
 anthropic = ["anthropic>=0.40"]
 google = ["google-genai>=1.0"]
-all = ["openai>=1.60", "anthropic>=0.40", "google-genai>=1.0"]
+bedrock = ["anthropic[bedrock]>=0.40"]
+vertex = ["anthropic[vertex]>=0.40", "google-genai>=1.0"]
+all = [
+    "openai>=1.60",
+    "anthropic[bedrock,vertex]>=0.40",
+    "google-genai>=1.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/model_message"]
