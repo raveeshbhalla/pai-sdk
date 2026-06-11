@@ -1,9 +1,18 @@
 # pai-sdk
 [Vercel AI SDK](https://ai-sdk.dev) ergonomics for Python: the `ModelMessage` type family, `generate_text()`, and `stream_text()` — one message format and one call interface across **OpenAI** (Chat Completions _and_ Responses API), **Anthropic** (Messages API), **Google Gemini** (`google-genai`), **OpenRouter**, **Amazon Bedrock**, **Google Vertex AI**, and **Azure OpenAI**, including multimodal input and multi-step tool calling.
 
+> **Status: alpha.** Used as the model-IO runtime under eval/optimization
+> tooling; APIs may change before 1.0. Docs: [prompt-config spec](docs/prompt-config.md)
+> · [embedding in a platform](docs/embedding.md) · [CHANGELOG](CHANGELOG.md).
+
 ```bash
 pip install "pai-sdk[all]"        # all providers
 pip install "pai-sdk[anthropic]"  # or pick: openai / anthropic / google / bedrock / vertex
+
+# From a checkout (not yet on PyPI):
+pip install -e "/path/to/pai-sdk[all]"
+# or pin by git tag once a remote exists:
+pip install "pai-sdk[anthropic] @ git+https://github.com/<org>/pai-sdk@v0.3.0"
 ```
 ## Quick start
 ```python

@@ -4,9 +4,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pai-sdk"
-version = "0.2.0"
-description = "AI-SDK-style ModelMessage types and generate_text/stream_text for Python, with OpenAI, Anthropic, Gemini, and OpenRouter providers."
+version = "0.3.0"
+description = "AI-SDK-style ModelMessage types, generate_text/stream_text, and prompt configs for Python — OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, Vertex, Azure."
 readme = "README.md"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Raveesh Bhalla" }]
