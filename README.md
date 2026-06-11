@@ -10,9 +10,9 @@ pip install "pai-sdk[all]"        # all providers
 pip install "pai-sdk[anthropic]"  # or pick: openai / anthropic / google / bedrock / vertex
 
 # From a checkout (not yet on PyPI):
-pip install -e "/path/to/pai-sdk[all]"
+pip install -e "/Users/raveesh/dev/pai-sdk[all]"   # local checkout
 # or pin by git tag once a remote exists:
-pip install "pai-sdk[anthropic] @ git+https://github.com/<org>/pai-sdk@v0.3.0"
+pip install "pai-sdk[anthropic] @ git+https://github.com/raveeshbhalla/pai-sdk@v0.3.0"
 ```
 ## Quick start
 ```python
