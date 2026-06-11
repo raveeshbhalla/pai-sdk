@@ -1,19 +1,11 @@
 # pai-sdk
-
-[Vercel AI SDK](https://ai-sdk.dev) ergonomics for Python: the `ModelMessage`
-type family, `generate_text()`, and `stream_text()` — one message format and
-one call interface across **OpenAI** (Chat Completions *and* Responses API),
-**Anthropic** (Messages API), **Google Gemini** (`google-genai`),
-**OpenRouter**, **Amazon Bedrock**, **Google Vertex AI**, and
-**Azure OpenAI**, including multimodal input and multi-step tool calling.
+[Vercel AI SDK](https://ai-sdk.dev) ergonomics for Python: the `ModelMessage` type family, `generate_text()`, and `stream_text()` — one message format and one call interface across **OpenAI** (Chat Completions _and_ Responses API), **Anthropic** (Messages API), **Google Gemini** (`google-genai`), **OpenRouter**, **Amazon Bedrock**, **Google Vertex AI**, and **Azure OpenAI**, including multimodal input and multi-step tool calling.
 
 ```bash
 pip install "pai-sdk[all]"        # all providers
 pip install "pai-sdk[anthropic]"  # or pick: openai / anthropic / google / bedrock / vertex
 ```
-
 ## Quick start
-
 ```python
 import asyncio
 from model_message import generate_text
@@ -30,11 +22,8 @@ async def main():
 asyncio.run(main())
 ```
 
-API keys come from the environment: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-`GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `OPENROUTER_API_KEY`.
-
+API keys come from the environment: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `OPENROUTER_API_KEY`.
 ## Choosing a model
-
 ```python
 from model_message.providers import (
     openai, anthropic, google, openrouter, bedrock, vertex, azure,
@@ -45,14 +34,12 @@ openai.chat("gpt-5.4")                  # OpenAI Chat Completions API
 anthropic("claude-opus-4-8")            # Anthropic Messages API
 google("gemini-2.5-flash")              # Gemini
 openrouter("anthropic/claude-opus-4.6") # OpenRouter (Chat Completions shape)
-
 # Cloud-hosted variants:
 bedrock("anthropic.claude-opus-4-8")    # Claude on Amazon Bedrock
 vertex("gemini-2.5-flash")              # Gemini on Google Vertex AI
 vertex.anthropic("claude-opus-4-8")     # Claude on Vertex AI
 azure("my-deployment")                  # Azure OpenAI (Responses API)
 azure.chat("my-deployment")             # Azure OpenAI (Chat Completions)
-
 # Or plain strings, AI SDK gateway-style:
 await generate_text(model="anthropic/claude-opus-4-8", prompt="...")
 await generate_text(model="openrouter/google/gemini-2.5-flash", prompt="...")
@@ -61,21 +48,16 @@ await generate_text(model="vertex/gemini-2.5-flash", prompt="...")
 await generate_text(model="azure/my-deployment", prompt="...")
 ```
 
-The cloud providers reuse the underlying Anthropic / Gemini / OpenAI request
-mappings — only the SDK client differs (AWS-signed, Vertex-scoped, or
-Azure-deployment-scoped). Credentials come from the environment:
+The cloud providers reuse the underlying Anthropic / Gemini / OpenAI request mappings — only the SDK client differs (AWS-signed, Vertex-scoped, or Azure-deployment-scoped). Credentials come from the environment:
 
-- **Bedrock** — `AWS_REGION` plus the standard AWS credential chain (or pass
-  `aws_region` / `aws_access_key` / `aws_secret_key` / `aws_session_token`).
-  Model ids carry the `anthropic.` prefix and are passed through verbatim.
-- **Vertex** — `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` (default
-  `us-central1`); Anthropic models use the `/anthropic` subpath via
-  `vertex.anthropic(...)`.
-- **Azure** — `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and
-  `OPENAI_API_VERSION`; the model id is the Azure *deployment* name.
+- **Bedrock** — `AWS_REGION` plus the standard AWS credential chain (or pass `aws_region` / `aws_access_key` / `aws_secret_key` / `aws_session_token`). Model ids carry the `anthropic.` prefix and are passed through verbatim.
+  
+- **Vertex** — `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` (default `us-central1`); Anthropic models use the `/anthropic` subpath via `vertex.anthropic(...)`.
+  
+- **Azure** — `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION`; the model id is the Azure _deployment_ name.
+  
 
-Install the matching extras: `pai-sdk[bedrock]` or
-`pai-sdk[vertex]` (Azure ships with the base `openai` extra).
+Install the matching extras: `pai-sdk[bedrock]` or `pai-sdk[vertex]` (Azure ships with the base `openai` extra).
 
 Configured provider instances:
 
@@ -90,13 +72,8 @@ my_bedrock = create_bedrock(aws_region="us-east-1")
 my_vertex = create_vertex(project="my-gcp-project", location="us-east5")
 my_azure = create_azure(azure_endpoint="https://my.openai.azure.com", api_version="2024-10-21")
 ```
-
 ## ModelMessage
-
-The same message union as the AI SDK — `system` / `user` / `assistant` /
-`tool` roles, discriminated content parts. Plain dicts and typed classes are
-interchangeable; serialized JSON is camelCase and wire-compatible with the
-TypeScript AI SDK.
+The same message union as the AI SDK — `system` / `user` / `assistant` / `tool` roles, discriminated content parts. Plain dicts and typed classes are interchangeable; serialized JSON is camelCase and wire-compatible with the TypeScript AI SDK.
 
 ```python
 from model_message import (
@@ -128,14 +105,8 @@ Content parts:
 | `ToolCallPart` | assistant | `tool_call_id`, `tool_name`, `input` |
 | `ToolResultPart` | tool | `tool_call_id`, `tool_name`, `output` (text / json / error-text / error-json / content) |
 
-Multimodal support per provider: images everywhere; PDFs to Anthropic, OpenAI,
-Gemini, and OpenRouter (`FilePart` with `media_type="application/pdf"`); audio
-to OpenAI Chat Completions and OpenRouter (`audio/wav`, `audio/mpeg`). Remote
-image URLs are passed through where the provider supports them and downloaded
-automatically for Gemini.
-
+Multimodal support per provider: images everywhere; PDFs to Anthropic, OpenAI, Gemini, and OpenRouter (`FilePart` with `media_type="application/pdf"`); audio to OpenAI Chat Completions and OpenRouter (`audio/wav`, `audio/mpeg`). Remote image URLs are passed through where the provider supports them and downloaded automatically for Gemini.
 ## Tools and the agent loop
-
 ```python
 from pydantic import BaseModel
 from model_message import generate_text, tool, step_count_is
@@ -164,23 +135,21 @@ print(result.steps)        # every generation step
 print(result.tool_results)
 ```
 
-- A Pydantic `input_schema` validates and parses the model's arguments before
-  `execute` runs (the Zod analog). Raw JSON Schema dicts work too.
-- Tool execution errors are caught and fed back to the model as `error-text`
-  results, like the AI SDK.
-- Tools without `execute` are client-side: calls are returned on
-  `result.tool_calls` and the loop stops.
-- `stop_when` accepts `step_count_is(n)`, `has_tool_call(name)`, a custom
-  `def cond(steps) -> bool`, or a list of conditions.
+- A Pydantic `input_schema` validates and parses the model's arguments before `execute` runs (the Zod analog). Raw JSON Schema dicts work too.
+  
+- Tool execution errors are caught and fed back to the model as `error-text` results, like the AI SDK.
+  
+- Tools without `execute` are client-side: calls are returned on `result.tool_calls` and the loop stops.
+  
+- `stop_when` accepts `step_count_is(n)`, `has_tool_call(name)`, a custom `def cond(steps) -> bool`, or a list of conditions.
+  
 
 Continue a conversation by appending the generated messages:
 
 ```python
 history = [*messages, *result.response.messages]
 ```
-
 ## Streaming
-
 ```python
 from model_message import stream_text
 from model_message.providers import anthropic
@@ -197,9 +166,7 @@ print(await result.usage)                   # awaitable aggregates
 print(await result.finish_reason)
 ```
 
-`full_stream` yields the AI SDK stream-part union (`start`, `start-step`,
-`text-start/-delta/-end`, `reasoning-*`, `tool-input-start/-delta/-end`,
-`tool-call`, `tool-result`, `tool-error`, `finish-step`, `finish`, `error`):
+`full_stream` yields the AI SDK stream-part union (`start`, `start-step`, `text-start/-delta/-end`, `reasoning-*`, `tool-input-start/-delta/-end`, `tool-call`, `tool-result`, `tool-error`, `finish-step`, `finish`, `error`):
 
 ```python
 async for part in result.full_stream:
@@ -211,15 +178,9 @@ async for part in result.full_stream:
         ...
 ```
 
-Streaming runs the same multi-step tool loop, and both streams can be
-consumed multiple times or concurrently. Errors surface as `error` parts on
-`full_stream` and re-raise when awaiting aggregates. Callbacks: `on_chunk`,
-`on_error`, `on_step_finish`, `on_finish`.
-
+Streaming runs the same multi-step tool loop, and both streams can be consumed multiple times or concurrently. Errors surface as `error` parts on `full_stream` and re-raise when awaiting aggregates. Callbacks: `on_chunk`, `on_error`, `on_step_finish`, `on_finish`.
 ## Provider options
-
-Untyped passthrough for provider-specific features, keyed by provider name —
-same escape hatch as the AI SDK:
+Untyped passthrough for provider-specific features, keyed by provider name — same escape hatch as the AI SDK:
 
 ```python
 # Anthropic adaptive thinking + effort
@@ -231,13 +192,10 @@ await generate_text(
         "output_config": {"effort": "high"},
     }},
 )
-
 # OpenAI Responses reasoning
 provider_options={"openai": {"reasoning": {"effort": "high", "summary": "auto"}}}
-
 # Gemini thinking
 provider_options={"google": {"thinking_config": {"thinking_level": "high", "include_thoughts": True}}}
-
 # OpenRouter routing / normalized reasoning
 provider_options={"openrouter": {
     "reasoning": {"effort": "high"},
@@ -245,28 +203,51 @@ provider_options={"openrouter": {
 }}
 ```
 
-Reasoning output comes back as `ReasoningPart`s (and `reasoning-*` stream
-parts). Anthropic thinking signatures and Gemini thought signatures are
-preserved in `provider_options` on the parts and replayed automatically when
-you append `result.response.messages` to history.
-
+Reasoning output comes back as `ReasoningPart`s (and `reasoning-*` stream parts). Anthropic thinking signatures and Gemini thought signatures are preserved in `provider_options` on the parts and replayed automatically when you append `result.response.messages` to history.
 ## Standard parameters
 
 `generate_text` / `stream_text` accept the AI SDK parameter set:
-`max_output_tokens`, `temperature`, `top_p`, `top_k`, `presence_penalty`,
-`frequency_penalty`, `stop_sequences`, `seed`, `tool_choice`
-(`"auto" | "none" | "required" | {"type": "tool", "tool_name": ...}`),
-`active_tools`, `headers`, `max_retries`, `provider_options`, `system`,
-`prompt` *or* `messages` — plus loop/lifecycle control: `prepare_step`
-(per-step model/tools/tool_choice/messages overrides), `repair_tool_call`,
-`abort_signal` (an `asyncio.Event`; or `result.abort()` on streams),
-`timeout` (total seconds or `{"total_ms", "step_ms"}`), `output` (structured
-output spec), and on `stream_text`: `transform` (e.g. `smooth_stream()`),
-`include_raw_chunks`, `on_abort`. Parameters a provider doesn't support are
-reported as `CallWarning`s in `result.warnings`, mirroring AI SDK behavior.
 
+**Input** (an optional system prompt, plus one of the two prompt forms):
+
+- `system` — system prompt string
+- `prompt` — string or message list, _or_ `messages` — message list
+
+**Sampling & limits:**
+
+- `max_output_tokens`
+- `temperature`, `top_p`, `top_k`
+- `presence_penalty`, `frequency_penalty`
+- `stop_sequences`, `seed`
+
+**Tools:**
+
+- `tools` — `{name: tool(...)}`
+- `tool_choice` — `"auto" | "none" | "required" | {"type": "tool", "tool_name": ...}`
+- `active_tools` — restrict which tools are exposed for this call
+
+**Loop & lifecycle control:**
+
+- `stop_when` — `step_count_is(n)`, `has_tool_call(name)`, custom, or a list
+- `prepare_step` — per-step model/tools/tool_choice/messages overrides
+- `repair_tool_call` — one retry for invalid tool calls
+- `abort_signal` — an `asyncio.Event` (or `result.abort()` on streams)
+- `timeout` — total seconds or `{"total_ms", "step_ms"}`
+- `output` — structured output spec (`Output.object(...)`)
+
+**Transport & escape hatches:**
+
+- `max_retries`, `headers`
+- `provider_options` — provider-specific passthrough
+
+**stream_text only:**
+
+- `transform` — e.g. `smooth_stream()`
+- `include_raw_chunks` — surface raw provider events as `raw` parts
+- `on_chunk` / `on_error` / `on_step_finish` / `on_finish` / `on_abort` callbacks
+
+Parameters a provider doesn't support are reported as `CallWarning`s in `result.warnings`, mirroring AI SDK behavior.
 ## Structured output
-
 ```python
 from pydantic import BaseModel
 from model_message import generate_object, stream_object, Output, generate_text
@@ -278,21 +259,17 @@ class Recipe(BaseModel):
 result = await generate_object(model=openai("gpt-5.4"), schema=Recipe,
                                prompt="A simple pancake recipe.")
 print(result.object.name)            # validated Recipe instance
-
 # Streaming partials:
 result = stream_object(model=openai("gpt-5.4"), schema=Recipe, prompt="...")
 async for partial in result.partial_object_stream:
     print(partial)                   # growing dicts via parse_partial_json
 print(await result.object)
-
 # Or combine text + structured output on generate_text:
 result = await generate_text(model=..., prompt=..., output=Output.object(schema=Recipe))
 print(result.output)
 ```
 
-There are also unified entry points that dispatch on intent: `generate(...)`
-and `stream(...)` behave as `generate_object`/`stream_object` when you pass
-`schema=`, and as `generate_text`/`stream_text` otherwise:
+The DSPy-module-style "it just knows" dispatch lives on **prompt configs**: a `Prompt` declares its output signature, so `prompt.generate(variables)` needs no flags — it returns text when the config has no `output:`, and a schema-validated object when it does (see [Typed messages & prompt configs](#typed-messages--prompt-configs)). The standalone unified entry points `generate(...)` / `stream(...)` are for ad-hoc calls where there is no config carrying the signature — there, `schema=` *is* the signature (Python can't see the expected return type at runtime), and its presence selects the object path:
 
 ```python
 from model_message import generate, stream
@@ -302,9 +279,7 @@ result.object                    # validated Recipe
 result = await generate(model=openai("gpt-5.4"), prompt="...")
 result.text                      # plain text result
 ```
-
 ## Agent
-
 ```python
 from model_message import Agent
 
@@ -317,48 +292,34 @@ agent = Agent(
 result = await agent.generate(prompt="Find recent papers on...")
 stream = agent.stream(prompt="...", temperature=0.2)  # per-call overrides win
 ```
-
 ## Results
-
 `GenerateTextResult` / awaitables on `StreamTextResult`:
 
 - `text`, `reasoning_text`, `content` (typed parts), `output` (structured output)
-- `tool_calls`, `tool_results` (including provider-executed server-side tools
-  — Anthropic/OpenAI web search etc. — flagged `provider_executed`)
-- `sources` (web-search/grounding citations as `UrlSourcePart`), `files`
-  (`GeneratedFile` with `.bytes`/`.base64`)
+  
+- `tool_calls`, `tool_results` (including provider-executed server-side tools — Anthropic/OpenAI web search etc. — flagged `provider_executed`)
+  
+- `sources` (web-search/grounding citations as `UrlSourcePart`), `files` (`GeneratedFile` with `.bytes`/`.base64`)
+  
 - `finish_reason` (`stop | length | content-filter | tool-calls | error | other | unknown`), `raw_finish_reason`
-- `usage` / `total_usage` (`input_tokens`, `output_tokens`, `total_tokens`,
-  `reasoning_tokens`, `cached_input_tokens`, plus `input_token_details` /
-  `output_token_details` cache/reasoning breakdowns)
-- `steps` (per-step results), `response.messages` (append to history),
-  `warnings` (structured `CallWarning`s), `request` (echoed request body),
-  `provider_metadata` (e.g. OpenRouter `cost`, Anthropic cache tokens)
-
+  
+- `usage` / `total_usage` (`input_tokens`, `output_tokens`, `total_tokens`, `reasoning_tokens`, `cached_input_tokens`, plus `input_token_details` / `output_token_details` cache/reasoning breakdowns)
+  
+- `steps` (per-step results), `response.messages` (append to history), `warnings` (structured `CallWarning`s), `request` (echoed request body), `provider_metadata` (e.g. OpenRouter `cost`, Anthropic cache tokens)
+  
 ## Architecture
-
-`generate_text`/`stream_text` normalize everything into `CallOptions` and a
-`list[ModelMessage]`, then call a `LanguageModel` implementation
-(`do_generate` / `do_stream`) — the same provider contract as the AI SDK's
-`LanguageModelV3`. Writing a new provider means implementing those two
-methods; the tool loop, streaming framing, retries, and message accounting
-live in the core.
-
+`generate_text`/`stream_text` normalize everything into `CallOptions` and a `list[ModelMessage]`, then call a `LanguageModel` implementation (`do_generate` / `do_stream`) — the same provider contract as the AI SDK's `LanguageModelV3`. Writing a new provider means implementing those two methods; the tool loop, streaming framing, retries, and message accounting live in the core.
 ## Middleware, registry, embeddings, traces
-
 Why each exists:
 
-- **Middleware** — intercept every model call without touching call sites:
-  log/trace rollouts, enforce default settings, cache, extract `<think>`
-  reasoning from models that inline it, or fake streaming for non-streaming
-  backends. It's the hook an optimizer or eval harness attaches to.
-- **Registry & aliases** — name models once (`"aliases:smart"`) and swap the
-  implementation (different provider, wrapped with middleware, candidate
-  under test) in one place instead of every call site.
-- **Embeddings** — similarity for retrieval, dedup, or clustering eval data;
-  same provider abstraction as text models.
-- **Trace helpers** — `dump_messages`/`load_messages` make ModelMessage the
-  log schema: a stored trace is byte-replayable input, not a lossy printout.
+- **Middleware** — intercept every model call without touching call sites: log/trace rollouts, enforce default settings, cache, extract `<think>` reasoning from models that inline it, or fake streaming for non-streaming backends. It's the hook an optimizer or eval harness attaches to.
+  
+- **Registry & aliases** — name models once (`"aliases:smart"`) and swap the implementation (different provider, wrapped with middleware, candidate under test) in one place instead of every call site.
+  
+- **Embeddings** — similarity for retrieval, dedup, or clustering eval data; same provider abstraction as text models.
+  
+- **Trace helpers** — `dump_messages`/`load_messages` make ModelMessage the log schema: a stored trace is byte-replayable input, not a lossy printout.
+  
 
 ```python
 from model_message import (
@@ -367,7 +328,6 @@ from model_message import (
     embed_many, cosine_similarity,
     dump_messages_json, load_messages,
 )
-
 # Middleware (AI SDK LanguageModelMiddleware): logging, defaults, reasoning
 # extraction, simulated streaming — or write your own transform_params /
 # wrap_generate / wrap_stream.
@@ -375,28 +335,22 @@ logged = wrap_language_model(openai("gpt-5.4"), [
     default_settings_middleware({"temperature": 0.2}),
     extract_reasoning_middleware(tag_name="think"),
 ])
-
 # Registry + aliases (great for swapping wrapped/candidate models):
 registry = create_provider_registry({
     "openai": openai,
     "aliases": custom_provider(language_models={"smart": logged}),
 })
 model = registry.language_model("aliases:smart")
-
 # Embeddings:
 result = await embed_many(model=openai.embedding("text-embedding-3-small"),
                           values=["a", "b"])
-
 # Lossless traces — ModelMessage is the log schema. Subclasses with extra
 # structured fields (templates, variable bindings) round-trip intact:
 text = dump_messages_json([*messages, *result.response.messages])
 history = load_messages(text)   # ready to re-send
 ```
-
 ## Typed messages & prompt configs
-
-Prompts as data: JSON/YAML in the codebase or fetched from a service, with
-`{variable}` slots and an explicit optimization contract.
+Prompts as data: JSON/YAML in the codebase or fetched from a service, with `{variable}` slots and an explicit optimization contract.
 
 ```yaml
 # prompts/triage.yaml
@@ -412,10 +366,7 @@ system: |                     # optimizable by default — this IS the instructi
 user: "Ticket: {ticket}"      # never optimized
 ```
 
-That's the simple form. The general form is an explicit `messages:` list —
-use it for multiple system blocks (e.g. frozen policy text next to mutable
-instructions), few-shot assistant turns, or per-message `optimize`/`id`
-control — and `output: {schema: {...}}` accepts full JSON Schema:
+That's the simple form. The general form is an explicit `messages:` list — use it for multiple system blocks (e.g. frozen policy text next to mutable instructions), few-shot assistant turns, or per-message `optimize`/`id` control — and `output: {schema: {...}}` accepts full JSON Schema:
 
 ```yaml
 messages:
@@ -438,7 +389,6 @@ from model_message import load_prompt, load_prompt_url
 prompt = load_prompt("prompts/triage.yaml")        # or a dict, or await load_prompt_url(...)
 result = await prompt.generate({"company": "Acme", "ticket": "It broke"})
 print(result.output)                               # validated against the schema
-
 # The optimization contract, enforced:
 evolved = prompt.with_template("instructions", "You are {company}'s expert...")
 prompt.with_template("ticket", "...")              # PromptError: not optimize: true
@@ -447,8 +397,7 @@ evolved.content_hash()                             # candidate identity
 evolved.to_dict()                                  # persist back to JSON/YAML
 ```
 
-The config format ships with a JSON Schema, so customers' editors validate
-and autocomplete prompt files. Point the YAML language server at it:
+The config format ships with a JSON Schema, so customers' editors validate and autocomplete prompt files. Point the YAML language server at it:
 
 ```yaml
 # yaml-language-server: $schema=https://<where-you-host-it>/prompt-config.schema.json
@@ -456,25 +405,11 @@ name: support-triage
 ...
 ```
 
-The schema file is packaged at `model_message/prompt-config.schema.json`
-(`from model_message import PROMPT_CONFIG_SCHEMA` for the parsed dict — print
-the path with `python -c "from model_message.prompts import PROMPT_CONFIG_SCHEMA_PATH; print(PROMPT_CONFIG_SCHEMA_PATH)"`),
-ready to be hosted by a prompt service. The same schema validates configs in
-CI before they ship.
+The schema file is packaged at `model_message/prompt-config.schema.json` (`from model_message import PROMPT_CONFIG_SCHEMA` for the parsed dict — print the path with `python -c "from model_message.prompts import PROMPT_CONFIG_SCHEMA_PATH; print(PROMPT_CONFIG_SCHEMA_PATH)"`), ready to be hosted by a prompt service. The same schema validates configs in CI before they ship.
 
-Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage`
-— subclasses that carry `template`, `variables`, `optimize`, and `id` alongside
-the rendered `content`. Providers see plain messages; `dump_messages` traces
-keep the structure, so logs record *which instructions* and *which bindings*
-produced every rollout. Template syntax is plain `{name}` only (portable to a
-TS implementation 1:1). YAML needs the `yaml` extra.
-
+Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage` — subclasses that carry `template`, `variables`, `optimize`, and `id` alongside the rendered `content`. Providers see plain messages; `dump_messages` traces keep the structure, so logs record _which instructions_ and _which bindings_ produced every rollout. Template syntax is plain `{name}` only (portable to a TS implementation 1:1). YAML needs the `yaml` extra.
 ## Cost estimates
-
-Adapters normalize every provider's cache/reasoning token accounting into
-`usage.input_token_details` / `usage.output_token_details`, so one formula
-prices all of them — uncached input, cache reads, cache writes, and
-text+reasoning output each at their own rate:
+Adapters normalize every provider's cache/reasoning token accounting into `usage.input_token_details` / `usage.output_token_details`, so one formula prices all of them — uncached input, cache reads, cache writes, and text+reasoning output each at their own rate:
 
 ```python
 from model_message import estimate_cost, register_pricing, ModelPricing
@@ -487,10 +422,7 @@ monthly = sum(costs, start=first_cost)        # CostEstimate supports +
 register_pricing("my-finetune", ModelPricing(input=2.0, output=8.0))
 ```
 
-Built-in prices are dated estimates (`pricing.PRICING_AS_OF`) for common
-Anthropic/OpenAI/Gemini models with substring lookup (Bedrock prefixes and
-dated snapshots resolve). For fresh, broad coverage, pull a server-hosted
-table at startup — entries merge over (and override) the built-ins:
+Built-in prices are dated estimates (`pricing.PRICING_AS_OF`) for common Anthropic/OpenAI/Gemini models with substring lookup (Bedrock prefixes and dated snapshots resolve). For fresh, broad coverage, pull a server-hosted table at startup — entries merge over (and override) the built-ins:
 
 ```python
 await refresh_pricing()                  # LiteLLM community table (default)
@@ -499,15 +431,6 @@ await refresh_pricing("models.dev")      # models.dev catalog
 await refresh_pricing("https://prices.internal/models.json", format="simple")
 ```
 
-The "simple" format for self-hosted tables is
-`{model_id: {"input": per_1M, "output": per_1M, "cache_read"?, "cache_write"?}}`.
-Or override individual models with `register_pricing` / pass `pricing=`.
-OpenRouter returns authoritative cost directly in
-`result.provider_metadata["openrouter"]["cost"]` — prefer that when available.
-Azure deployments have arbitrary names, so register pricing per deployment.
-
+The "simple" format for self-hosted tables is `{model_id: {"input": per_1M, "output": per_1M, "cache_read"?, "cache_write"?}}`. Or override individual models with `register_pricing` / pass `pricing=`. OpenRouter returns authoritative cost directly in `result.provider_metadata["openrouter"]["cost"]` — prefer that when available. Azure deployments have arbitrary names, so register pricing per deployment.
 ## Not (yet) implemented
-
-MCP tool loading, image/speech/transcription models, telemetry, and the
-tool-approval *flow* (the message types exist; the loop doesn't pause on
-approvals yet).
+MCP tool loading, image/speech/transcription models, telemetry, and the tool-approval _flow_ (the message types exist; the loop doesn't pause on approvals yet).
