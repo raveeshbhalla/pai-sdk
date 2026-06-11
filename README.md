@@ -465,6 +465,27 @@ result = await generate_text(
 )
 ```
 
+### Tools in configs
+
+Configs can declare tool interfaces (name, description, input schema — same
+shorthand as `output:`); behavior binds at call time. With `optimize: true`,
+a reflective optimizer may rewrite the tool **description** (when-to-call
+errors are description failures) while the name and schema stay contractual
+— enforced by `with_tool_description`, like `with_template`:
+
+```yaml
+tools:
+  get_weather:
+    description: Get current weather. Call when asked about conditions.
+    optimize: true
+    input: { city: string }
+max_steps: 5
+```
+
+```python
+result = await prompt.generate(vars, handlers={"get_weather": get_weather_fn})
+```
+
 ### Running prompts & the optimization contract
 
 ```python

@@ -99,6 +99,35 @@ output:
 When `output` is present, `prompt.generate()` requests provider-strict
 structured output and returns the validated object on `result.output`.
 
+## Tools
+
+Tool **interfaces** are config; tool **behavior** is code. The config declares
+name (the key), description, and input schema; `execute` functions bind by
+name at call time. Declared tools without a handler are client-side — calls
+come back on `result.tool_calls`.
+
+```yaml
+tools:
+  get_weather:
+    description: Get current weather. Call when asked about conditions.
+    optimize: true        # an optimizer MAY rewrite the DESCRIPTION
+    input:                # same field:type shorthand as output:
+      city: string
+  search_docs:
+    description: Search documentation.
+    input: { schema: { type: object, properties: {...}, ... } }   # full JSON Schema
+tool_choice: auto         # auto | none | required | {type: tool, tool_name: ...}
+max_steps: 5              # tool-loop budget -> stop_when=step_count_is(5)
+```
+
+```python
+result = await prompt.generate(variables, handlers={"get_weather": get_weather_fn})
+```
+
+Handlers for undeclared tool names raise `PromptError` (catches typos).
+Provider server-side tools (web search etc.) are not declared here — pass
+them via `provider_options`.
+
 ## The optimization contract
 
 These rules are **enforced by the library**, not advisory — they are what make
@@ -109,7 +138,13 @@ optimizer-produced versions safe to adopt automatically:
    whose placeholder set differs from the original.
 2. **Only `optimize: true` messages may be rewritten.** Mutating any other
    message raises `PromptError`.
-3. **Mutations are non-destructive.** `with_template` returns a new `Prompt`;
+3. **Tool descriptions are optimizable prose; names and schemas are the
+   contract.** `with_tool_description(name, text)` rewrites a tool's
+   description only when that tool is `optimize: true`; the name and input
+   schema cannot change through mutation by construction. (When-to-call
+   errors are description failures — descriptions are a first-class
+   optimization target.) `optimizable_tools()` lists the eligible tools.
+4. **Mutations are non-destructive.** `with_template` returns a new `Prompt`;
    `content_hash()` (16-hex) identifies a candidate; `to_dict()` serializes it
    back to config form for persistence/promotion.
 

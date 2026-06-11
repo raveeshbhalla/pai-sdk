@@ -62,7 +62,8 @@ from typing import Any, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .errors import AISDKError, MissingDependencyError
-from .generate import generate_text, stream_text
+from .generate import generate_text, step_count_is, stream_text
+from .tools import tool as make_tool
 from .messages import ModelMessage
 from .output import Output
 from .typed import TYPED_MESSAGE_TYPES, extract_variables
@@ -162,6 +163,42 @@ class PromptOutput(BaseModel):
     description: Optional[str] = None
 
 
+class PromptTool(BaseModel):
+    """A tool *interface* declared in a prompt config.
+
+    The config carries what is serializable and optimizable — description and
+    input schema; behavior binds at call time via `prompt.generate(...,
+    handlers={name: fn})`. Declared tools without a handler are client-side:
+    calls come back on result.tool_calls. The name (the dict key) and the
+    schema are the contract; with `optimize: true` the DESCRIPTION text may be
+    rewritten by an optimizer (descriptions are instructions — when-to-call
+    errors are description failures).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: Optional[str] = None
+    optimize: bool = False
+    # Field-type shorthand (same grammar as output:) or {"schema": {...}}.
+    input: Optional[dict[str, Any]] = None
+    strict: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def _validate_input(self) -> "PromptTool":
+        self.input_schema()  # compile eagerly so config errors surface at load
+        return self
+
+    def input_schema(self) -> Optional[dict[str, Any]]:
+        if self.input is None:
+            return None
+        if "schema" in self.input:
+            return self.input["schema"]
+        return compile_output_shorthand(self.input)
+
+
+ToolChoiceConfig = Union[Literal["auto", "none", "required"], dict[str, Any]]
+
+
 class Prompt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -171,6 +208,9 @@ class Prompt(BaseModel):
     model: Optional[str] = None  # "provider/model-id" string
     params: dict[str, Any] = Field(default_factory=dict)
     output: Optional[PromptOutput] = None
+    tools: dict[str, PromptTool] = Field(default_factory=dict)
+    tool_choice: Optional[ToolChoiceConfig] = None
+    max_steps: Optional[int] = Field(default=None, ge=1)
     messages: list[PromptMessage] = Field(default_factory=list)
 
     @model_validator(mode="before")
@@ -281,6 +321,31 @@ class Prompt(BaseModel):
         messages = [*self.messages[:index], updated, *self.messages[index + 1 :]]
         return self.model_copy(update={"messages": messages})
 
+    def with_tool_description(self, tool_name: str, new_description: str) -> "Prompt":
+        """A new Prompt with one tool's DESCRIPTION rewritten.
+
+        Same contract shape as with_template: the tool must exist and be
+        `optimize: true`. The tool's name and input schema are the contract
+        and cannot be changed through this method by construction.
+        """
+        tool_config = self.tools.get(tool_name)
+        if tool_config is None:
+            raise PromptError(f"No tool named '{tool_name}'.")
+        if not tool_config.optimize:
+            raise PromptError(
+                f"Tool '{tool_name}' is not marked optimize: true — "
+                "its description must not be rewritten."
+            )
+        tools = {
+            **self.tools,
+            tool_name: tool_config.model_copy(update={"description": new_description}),
+        }
+        return self.model_copy(update={"tools": tools})
+
+    def optimizable_tools(self) -> dict[str, PromptTool]:
+        """The tools whose descriptions a reflective optimizer may rewrite."""
+        return {name: t for name, t in self.tools.items() if t.optimize}
+
     # -- rendering & execution ------------------------------------------------
 
     def render(self, variables: Optional[dict[str, Any]] = None) -> list[ModelMessage]:
@@ -319,7 +384,11 @@ class Prompt(BaseModel):
         return rendered
 
     def _call_kwargs(
-        self, variables: Optional[dict[str, Any]], model: Any, overrides: dict[str, Any]
+        self,
+        variables: Optional[dict[str, Any]],
+        model: Any,
+        handlers: Optional[dict[str, Any]],
+        overrides: dict[str, Any],
     ) -> dict[str, Any]:
         resolved_model = model if model is not None else self.model
         if resolved_model is None:
@@ -336,6 +405,33 @@ class Prompt(BaseModel):
                 name=self.output.name,
                 description=self.output.description,
             )
+
+        handlers = handlers or {}
+        unknown = sorted(set(handlers) - set(self.tools))
+        if unknown:
+            raise PromptError(
+                f"Handlers for undeclared tools: {', '.join(unknown)}. "
+                f"Declared tools: {', '.join(sorted(self.tools)) or '(none)'}."
+            )
+        if self.tools:
+            # Declared tools without a handler are client-side: calls come
+            # back on result.tool_calls. An explicit tools= override wins.
+            kwargs.setdefault(
+                "tools",
+                {
+                    name: make_tool(
+                        description=t.description,
+                        input_schema=t.input_schema(),
+                        execute=handlers.get(name),
+                        strict=t.strict,
+                    )
+                    for name, t in self.tools.items()
+                },
+            )
+            if self.tool_choice is not None:
+                kwargs.setdefault("tool_choice", self.tool_choice)
+        if self.max_steps is not None:
+            kwargs.setdefault("stop_when", step_count_is(self.max_steps))
         return kwargs
 
     async def generate(
@@ -343,21 +439,24 @@ class Prompt(BaseModel):
         variables: Optional[dict[str, Any]] = None,
         *,
         model: Any = None,
+        handlers: Optional[dict[str, Any]] = None,
         **overrides: Any,
     ):
         """Render and run generate_text with this prompt's config.
+        `handlers` binds execute functions to declared tool names;
         `overrides` are generate_text kwargs and win over `params`."""
-        return await generate_text(**self._call_kwargs(variables, model, overrides))
+        return await generate_text(**self._call_kwargs(variables, model, handlers, overrides))
 
     def stream(
         self,
         variables: Optional[dict[str, Any]] = None,
         *,
         model: Any = None,
+        handlers: Optional[dict[str, Any]] = None,
         **overrides: Any,
     ):
         """Render and run stream_text with this prompt's config."""
-        return stream_text(**self._call_kwargs(variables, model, overrides))
+        return stream_text(**self._call_kwargs(variables, model, handlers, overrides))
 
 
 # ---------------------------------------------------------------------------

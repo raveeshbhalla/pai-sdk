@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 — 2026-06-11
+
+- Tools in prompt configs: `tools:` (interface in data — description +
+  input-schema shorthand; behavior binds via `prompt.generate(...,
+  handlers={name: fn})`), `tool_choice:`, `max_steps:`. Declared tools
+  without handlers are client-side.
+- Optimization contract extended to tool descriptions:
+  `with_tool_description()` / `optimizable_tools()` — descriptions are
+  mutable prose when `optimize: true`; names and input schemas are
+  contractual and cannot change through mutation.
+- Config JSON Schema updated accordingly (loader<->schema agreement tested).
+
 ## 0.3.0 — 2026-06-11
 
 First version intended for consumption by other codebases.

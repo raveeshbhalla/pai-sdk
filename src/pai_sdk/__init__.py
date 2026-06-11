@@ -162,6 +162,7 @@ from .prompts import (
     Prompt,
     PromptError,
     PromptMessage,
+    PromptTool,
     compile_output_shorthand,
     load_prompt,
     load_prompt_url,
@@ -177,7 +178,7 @@ from .typed import (
     render_template,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # core functions
@@ -342,4 +343,5 @@ __all__ = [
     "load_prompt_url",
     "compile_output_shorthand",
     "PROMPT_CONFIG_SCHEMA",
+    "PromptTool",
 ]

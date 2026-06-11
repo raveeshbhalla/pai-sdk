@@ -155,7 +155,7 @@ def test_prompt_requires_model_somewhere():
     del config["model"]
     prompt = load_prompt(config)
     with pytest.raises(PromptError, match="no model"):
-        prompt._call_kwargs({"company": "A", "ticket": "B"}, None, {})
+        prompt._call_kwargs({"company": "A", "ticket": "B"}, None, None, {})
 
 
 # ---------------------------------------------------------------------------
@@ -466,3 +466,168 @@ def test_schema_file_ships_with_package():
 
     assert PROMPT_CONFIG_SCHEMA_PATH.exists()
     assert PROMPT_CONFIG_SCHEMA["title"] == "pai-sdk prompt config"
+
+
+# ---------------------------------------------------------------------------
+# Tools in prompt configs
+# ---------------------------------------------------------------------------
+
+TOOL_CONFIG = {
+    "name": "weather-helper",
+    "model": "anthropic/claude-haiku-4-5",
+    "system": "Answer using tools when needed.",
+    "user": "Question: {q}",
+    "tools": {
+        "get_weather": {
+            "description": "Get current weather. Call when asked about conditions.",
+            "optimize": True,
+            "input": {"city": "string"},
+        },
+        "search_docs": {
+            "description": "Search documentation.",
+            "input": {"schema": {"type": "object", "properties": {"query": {"type": "string"}},
+                                  "required": ["query"], "additionalProperties": False}},
+        },
+    },
+    "tool_choice": "auto",
+    "max_steps": 3,
+}
+
+
+def test_prompt_tool_parsing_and_schemas():
+    prompt = load_prompt(TOOL_CONFIG)
+    weather = prompt.tools["get_weather"]
+    assert weather.input_schema()["properties"]["city"] == {"type": "string"}
+    assert weather.input_schema()["additionalProperties"] is False
+    docs = prompt.tools["search_docs"]
+    assert docs.input_schema()["properties"]["query"] == {"type": "string"}  # full-schema form
+    assert [*prompt.optimizable_tools()] == ["get_weather"]
+    with pytest.raises(Exception, match="Unknown output field type"):
+        load_prompt({**TOOL_CONFIG, "tools": {"x": {"input": {"a": "strang"}}}})
+
+
+async def test_prompt_tools_reach_engine_and_loop():
+    calls = []
+
+    def get_weather(input):
+        calls.append(input)
+        return f"72F in {input['city']}"
+
+    from conftest import tool_step
+
+    model = FakeModel(
+        steps=[
+            tool_step("get_weather", tool_input={"city": "Paris"}),
+            text_step("It is 72F in Paris."),
+        ]
+    )
+    prompt = load_prompt(TOOL_CONFIG)
+    result = await prompt.generate(
+        {"q": "Weather in Paris?"}, model=model, handlers={"get_weather": get_weather}
+    )
+    # tool specs reached CallOptions
+    options = model.calls[0]
+    assert {s.name for s in options.tools} == {"get_weather", "search_docs"}
+    weather_spec = next(s for s in options.tools if s.name == "get_weather")
+    assert "Call when asked" in weather_spec.description
+    assert weather_spec.input_schema["properties"]["city"] == {"type": "string"}
+    assert options.tool_choice == "auto"
+    # the loop ran (max_steps=3 allowed the second step) and the handler fired
+    assert calls == [{"city": "Paris"}]
+    assert result.text == "It is 72F in Paris."
+    assert len(result.steps) == 2
+
+
+async def test_prompt_tools_client_side_without_handler():
+    from conftest import tool_step
+
+    model = FakeModel(steps=[tool_step("get_weather", tool_input={"city": "Oslo"})])
+    prompt = load_prompt(TOOL_CONFIG)
+    result = await prompt.generate({"q": "Weather?"}, model=model)  # no handlers
+    assert result.finish_reason == "tool-calls"
+    assert result.tool_calls[0].tool_name == "get_weather"
+    assert result.tool_results == []  # client-side: nothing executed
+    assert len(model.calls) == 1
+
+
+async def test_prompt_handlers_for_undeclared_tool_rejected():
+    prompt = load_prompt(TOOL_CONFIG)
+    with pytest.raises(PromptError, match="undeclared tools: get_wether"):
+        await prompt.generate({"q": "x"}, model=FakeModel(steps=[text_step("ok")]),
+                              handlers={"get_wether": lambda i: "?"})
+
+
+def test_with_tool_description_contract():
+    prompt = load_prompt(TOOL_CONFIG)
+    evolved = prompt.with_tool_description(
+        "get_weather", "Fetch live weather; always call before answering weather questions."
+    )
+    assert "always call" in evolved.tools["get_weather"].description
+    assert prompt.tools["get_weather"].description.startswith("Get current")  # original untouched
+    assert evolved.content_hash() != prompt.content_hash()
+    # schema/name unchanged by construction
+    assert evolved.tools["get_weather"].input_schema() == prompt.tools["get_weather"].input_schema()
+    with pytest.raises(PromptError, match="not marked optimize"):
+        prompt.with_tool_description("search_docs", "x")
+    with pytest.raises(PromptError, match="No tool named"):
+        prompt.with_tool_description("nope", "x")
+
+
+def test_tools_round_trip_and_schema_agreement():
+    prompt = load_prompt(TOOL_CONFIG)
+    dumped = prompt.to_dict()
+    assert dumped["tools"]["get_weather"]["input"] == {"city": "string"}  # shorthand preserved
+    assert load_prompt(dumped).content_hash() == prompt.content_hash()
+    # the packaged config schema accepts it...
+    assert _validates(TOOL_CONFIG)
+    assert _validates(dumped)
+    # ...and rejects malformed tool configs that the loader also rejects
+    bad = [
+        {**TOOL_CONFIG, "tools": {"x": {"inputs": {}}}},        # typo'd key
+        {**TOOL_CONFIG, "tool_choice": "always"},               # bad enum
+        {**TOOL_CONFIG, "max_steps": 0},                        # below minimum
+    ]
+    for config in bad:
+        assert not _validates(config), f"schema wrongly accepted {config}"
+        with pytest.raises(Exception):
+            load_prompt(json.loads(json.dumps(config)))
+
+
+@pytest.mark.live
+async def test_prompt_config_tool_loop_live():
+    import os
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        pytest.skip("requires ANTHROPIC_API_KEY")
+
+    calls = []
+
+    def get_weather(input):
+        calls.append(input.get("city"))
+        return f"It is 72F and sunny in {input.get('city')}."
+
+    prompt = load_prompt(
+        {
+            "name": "weather-live",
+            "model": "anthropic/claude-haiku-4-5",
+            "params": {"max_output_tokens": 1000},
+            "system": "Use the get_weather tool to answer weather questions.",
+            "user": "What's the weather in {city}? Use the tool.",
+            "tools": {
+                "get_weather": {
+                    "description": "Get the current weather for a city. "
+                    "Call whenever asked about weather conditions.",
+                    "optimize": True,
+                    "input": {"city": "string"},
+                }
+            },
+            "max_steps": 3,
+        }
+    )
+    result = await prompt.generate(
+        {"city": "Berlin"}, handlers={"get_weather": get_weather}
+    )
+    assert calls and "berlin" in calls[0].lower()
+    assert "72" in result.text
+    assert len(result.steps) >= 2
+    assert result.finish_reason == "stop"
