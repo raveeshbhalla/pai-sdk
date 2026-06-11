@@ -1,7 +1,26 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, AsyncIterator
+
+
+def _load_env_local() -> None:
+    """Load KEY=VALUE pairs from .env.local (repo root) for live tests.
+    Existing environment variables win."""
+    env_file = Path(__file__).resolve().parent.parent / ".env.local"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
+_load_env_local()
 
 from model_message import (
     CallOptions,

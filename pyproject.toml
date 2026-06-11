@@ -33,6 +33,9 @@ packages = ["src/model_message"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "live: tests that call real provider APIs (need keys in .env.local; deselect with -m 'not live')",
+]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]

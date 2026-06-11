@@ -26,6 +26,23 @@ ObjectSchema = Union[type[BaseModel], dict[str, Any]]
 ParseState = str  # "successful-parse" | "repaired-parse" | "failed-parse"
 
 
+def _strictify_schema(node: Any) -> Any:
+    """Recursively prepare a Pydantic-generated JSON Schema for providers'
+    strict modes: every object gets additionalProperties=false and all of its
+    properties marked required (optionality stays expressible via null
+    unions, which Pydantic already emits for Optional fields)."""
+    if isinstance(node, dict):
+        if node.get("type") == "object" and isinstance(node.get("properties"), dict):
+            node.setdefault("additionalProperties", False)
+            node["required"] = list(node["properties"].keys())
+        for value in node.values():
+            _strictify_schema(value)
+    elif isinstance(node, list):
+        for value in node:
+            _strictify_schema(value)
+    return node
+
+
 # ---------------------------------------------------------------------------
 # Output specs
 # ---------------------------------------------------------------------------
@@ -55,7 +72,12 @@ class ObjectOutputSpec:
 
     def _json_schema(self) -> dict[str, Any]:
         if isinstance(self.schema, type) and issubclass(self.schema, BaseModel):
-            return self.schema.model_json_schema()
+            # Providers' strict structured-output modes (OpenAI strict,
+            # Anthropic output_config) require additionalProperties: false and
+            # every property listed in `required`. We own the Pydantic->JSON
+            # Schema conversion, so normalize it; raw dict schemas are the
+            # caller's responsibility and pass through untouched.
+            return _strictify_schema(self.schema.model_json_schema())
         return self.schema
 
     def response_format(self) -> dict[str, Any]:
