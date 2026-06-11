@@ -293,3 +293,111 @@ async def test_prompt_config_live_gepa_loop(tmp_path):
     trace = dump_messages(result2.response.messages)
     rendered = evolved.render(variables)
     assert "expert analyst" in rendered[0].content
+
+
+# ---------------------------------------------------------------------------
+# Simple-form configs (top-level system/user, output type shorthand)
+# ---------------------------------------------------------------------------
+
+from model_message.prompts import compile_output_shorthand  # noqa: E402
+
+
+def test_output_shorthand_compiles():
+    schema = compile_output_shorthand(
+        {
+            "urgency": ["low", "medium", "high"],
+            "summary": "string",
+            "score": "number",
+            "count": "integer",
+            "done": "boolean",
+            "tags": "string[]",
+            "untyped": None,
+            "user": {"name": "string", "id": "integer"},
+        }
+    )
+    props = schema["properties"]
+    assert props["urgency"] == {"enum": ["low", "medium", "high"]}
+    assert props["summary"] == {"type": "string"}
+    assert props["tags"] == {"type": "array", "items": {"type": "string"}}
+    assert props["untyped"] == {"type": "string"}
+    assert props["user"]["properties"]["id"] == {"type": "integer"}
+    assert props["user"]["additionalProperties"] is False
+    assert schema["required"] == list(props.keys())
+    assert schema["additionalProperties"] is False
+    with pytest.raises(PromptError, match="Unknown output field type"):
+        compile_output_shorthand({"x": "strang"})
+
+
+def test_simple_form_config():
+    prompt = load_prompt(
+        {
+            "name": "triage",
+            "model": "anthropic/claude-haiku-4-5",
+            "output": {"urgency": ["low", "high"]},
+            "system": "You triage tickets for {company}. Be decisive.",
+            "user": "Ticket: {ticket}",
+        }
+    )
+    # system/user become messages; system is optimizable by default
+    assert [m.id for m in prompt.messages] == ["system", "user"]
+    assert prompt.messages[0].optimize is True
+    assert prompt.messages[1].optimize is False
+    # output shorthand compiled to a strict JSON Schema
+    assert prompt.output.schema_["properties"]["urgency"] == {"enum": ["low", "high"]}
+    assert prompt.output.schema_["additionalProperties"] is False
+    # the optimization contract works on the simple form
+    evolved = prompt.with_template("system", "Best triager for {company} ever.")
+    assert "Best triager" in evolved.messages[0].template
+    with pytest.raises(PromptError, match="not marked optimize"):
+        prompt.with_template("user", "changed {ticket}")
+
+
+def test_simple_form_dict_control_and_conflicts():
+    prompt = load_prompt(
+        {
+            "name": "x",
+            "system": {"template": "Frozen {a}.", "optimize": False},
+            "user": "Q: {q}",
+        }
+    )
+    assert prompt.messages[0].optimize is False
+    with pytest.raises(Exception, match="not both"):
+        load_prompt(
+            {
+                "name": "x",
+                "system": "s",
+                "messages": [{"role": "user", "content": "u"}],
+            }
+        )
+    with pytest.raises(Exception, match="needs messages"):
+        load_prompt({"name": "x"})
+
+
+# ---------------------------------------------------------------------------
+# Unified generate()/stream() dispatch
+# ---------------------------------------------------------------------------
+
+
+async def test_unified_generate_and_stream_dispatch():
+    from pydantic import BaseModel
+
+    from model_message import generate, stream
+
+    class Out(BaseModel):
+        answer: str
+
+    model = FakeModel(steps=[text_step('{"answer": "42"}')])
+    result = await generate(model=model, schema=Out, prompt="q")
+    assert result.object.answer == "42"  # GenerateObjectResult path
+
+    model = FakeModel(steps=[text_step("plain")])
+    result = await generate(model=model, prompt="q")
+    assert result.text == "plain"  # GenerateTextResult path
+
+    model = FakeModel(steps=[text_step('{"answer": "x"}')])
+    s = stream(model=model, schema=Out, prompt="q")
+    assert (await s.object).answer == "x"
+
+    model = FakeModel(steps=[text_step("hello")])
+    s = stream(model=model, prompt="q")
+    assert await s.text == "hello"

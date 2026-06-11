@@ -106,7 +106,7 @@ class MissingDependencyError(AISDKError):
     def __init__(self, package: str, extra: str) -> None:
         super().__init__(
             f"The '{package}' package is required for this provider. "
-            f"Install it with: pip install 'model-message[{extra}]'"
+            f"Install it with: pip install 'pai-sdk[{extra}]'"
         )
         self.package = package
         self.extra = extra

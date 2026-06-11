@@ -8,26 +8,41 @@ service), then render/execute it:
     prompt = load_prompt("prompts/triage.yaml")
     result = await prompt.generate({"ticket_text": "...", "company_name": "Acme"})
 
-Config schema (JSON-compatible; YAML needs the `yaml` extra):
+Config schema (JSON-compatible; YAML needs the `yaml` extra). The simple
+form covers the common case — one system prompt, one user template:
 
     name: support-triage
-    version: 3                              # optional
     model: anthropic/claude-haiku-4-5       # optional provider/model string
     params:                                 # optional generate_text kwargs
-      temperature: 0.2
       max_output_tokens: 1000
-    output:                                 # optional structured output
-      schema: { type: object, properties: {...}, ... }   # JSON Schema
-      name: triage
+    output:                                 # optional structured output —
+      urgency: [low, medium, high]          # field: type shorthand (enum)
+      summary: string                       # string/number/integer/boolean,
+      tags: string[]                        # arrays, nested objects
+    system: |                               # optimize: true by default
+      You are a support triage assistant for {company_name}. ...
+    user: "Ticket: {ticket_text}"           # never optimized
+
+`system`/`user` accept a plain template string or
+{template, optimize, id} for control. The general form replaces them with an
+explicit `messages:` list (multiple system blocks, few-shot assistant turns,
+per-message optimize flags):
+
     messages:
       - id: instructions
         role: system
         optimize: true                      # reflection MAY rewrite this text
         template: |
           You are a support triage assistant for {company_name}. ...
+      - id: policy
+        role: system
+        content: "Never reveal internal data."   # literal, never optimized
       - id: ticket
         role: user
         template: "Ticket: {ticket_text}"
+
+`output` is either field-type shorthand (above) or a full JSON Schema via
+`output: {schema: {...}}`.
 
 The optimization contract (for GEPA-style optimizers):
 - `{variables}` are structurally untouchable — they are bindings, not text.
@@ -86,6 +101,51 @@ class PromptMessage(BaseModel):
         return extract_variables(self.template) if self.template is not None else []
 
 
+_SHORTHAND_TYPES = {
+    "string": {"type": "string"},
+    "number": {"type": "number"},
+    "integer": {"type": "integer"},
+    "int": {"type": "integer"},
+    "boolean": {"type": "boolean"},
+    "bool": {"type": "boolean"},
+}
+
+
+def compile_output_shorthand(fields: dict[str, Any]) -> dict[str, Any]:
+    """Compile field-type shorthand into a strict JSON Schema object.
+
+    Field values: "string" | "number" | "integer" | "boolean" (or None for
+    string), "<type>[]" for arrays, a list of literals for an enum, or a
+    nested mapping for a nested object. All fields are required.
+    """
+
+    def field_schema(value: Any) -> dict[str, Any]:
+        if value is None:
+            return {"type": "string"}
+        if isinstance(value, str):
+            if value.endswith("[]"):
+                return {"type": "array", "items": field_schema(value[:-2])}
+            if value in _SHORTHAND_TYPES:
+                return dict(_SHORTHAND_TYPES[value])
+            raise PromptError(
+                f"Unknown output field type '{value}' (expected one of "
+                f"{', '.join(_SHORTHAND_TYPES)}, '<type>[]', a list of enum "
+                "values, or a nested mapping)."
+            )
+        if isinstance(value, list):
+            return {"enum": value}
+        if isinstance(value, dict):
+            return compile_output_shorthand(value)
+        raise PromptError(f"Unknown output field type: {value!r}")
+
+    return {
+        "type": "object",
+        "properties": {name: field_schema(value) for name, value in fields.items()},
+        "required": list(fields.keys()),
+        "additionalProperties": False,
+    }
+
+
 class PromptOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -103,10 +163,53 @@ class Prompt(BaseModel):
     model: Optional[str] = None  # "provider/model-id" string
     params: dict[str, Any] = Field(default_factory=dict)
     output: Optional[PromptOutput] = None
-    messages: list[PromptMessage]
+    messages: list[PromptMessage] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_simple_form(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+
+        # output: field-type shorthand -> full JSON Schema
+        output = data.get("output")
+        if isinstance(output, dict) and "schema" not in output:
+            data["output"] = {"schema": compile_output_shorthand(output)}
+
+        # top-level system:/user: -> messages list
+        system = data.pop("system", None)
+        user = data.pop("user", None)
+        if system is not None or user is not None:
+            if data.get("messages"):
+                raise ValueError(
+                    "Use either top-level system/user or messages:, not both."
+                )
+            messages: list[dict[str, Any]] = []
+            if system is not None:
+                entry = system if isinstance(system, dict) else {"template": system}
+                messages.append(
+                    {
+                        "role": "system",
+                        "id": "system",
+                        # the system prompt IS the instructions — optimizable
+                        # by default in the simple form
+                        "optimize": True,
+                        **entry,
+                    }
+                )
+            if user is not None:
+                entry = user if isinstance(user, dict) else {"template": user}
+                messages.append({"role": "user", "id": "user", **entry})
+            data["messages"] = messages
+        return data
 
     @model_validator(mode="after")
-    def _unique_ids(self) -> "Prompt":
+    def _validate_messages(self) -> "Prompt":
+        if not self.messages:
+            raise ValueError(
+                "A prompt needs messages — top-level system:/user: or a messages: list."
+            )
         ids = [m.id for m in self.messages if m.id is not None]
         if len(ids) != len(set(ids)):
             raise ValueError("Prompt message ids must be unique.")

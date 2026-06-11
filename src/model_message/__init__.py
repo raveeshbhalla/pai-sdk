@@ -106,8 +106,10 @@ from .output import (
     GenerateObjectResult,
     Output,
     StreamObjectResult,
+    generate,
     generate_object,
     parse_partial_json,
+    stream,
     stream_object,
 )
 from .provider import CallOptions, FunctionToolSpec, LanguageModel, ProviderResult
@@ -159,6 +161,7 @@ from .prompts import (
     Prompt,
     PromptError,
     PromptMessage,
+    compile_output_shorthand,
     load_prompt,
     load_prompt_url,
 )
@@ -180,6 +183,8 @@ __all__ = [
     "generate_text",
     "stream_text",
     "StreamTextResult",
+    "generate",
+    "stream",
     "generate_object",
     "stream_object",
     "GenerateObjectResult",
@@ -334,4 +339,5 @@ __all__ = [
     "PromptError",
     "load_prompt",
     "load_prompt_url",
+    "compile_output_shorthand",
 ]

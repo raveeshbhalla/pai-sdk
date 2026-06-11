@@ -1,4 +1,4 @@
-# model-message
+# pai-sdk
 
 [Vercel AI SDK](https://ai-sdk.dev) ergonomics for Python: the `ModelMessage`
 type family, `generate_text()`, and `stream_text()` — one message format and
@@ -8,8 +8,8 @@ one call interface across **OpenAI** (Chat Completions *and* Responses API),
 **Azure OpenAI**, including multimodal input and multi-step tool calling.
 
 ```bash
-pip install "model-message[all]"        # all providers
-pip install "model-message[anthropic]"  # or pick: openai / anthropic / google / bedrock / vertex
+pip install "pai-sdk[all]"        # all providers
+pip install "pai-sdk[anthropic]"  # or pick: openai / anthropic / google / bedrock / vertex
 ```
 
 ## Quick start
@@ -74,8 +74,8 @@ Azure-deployment-scoped). Credentials come from the environment:
 - **Azure** — `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and
   `OPENAI_API_VERSION`; the model id is the Azure *deployment* name.
 
-Install the matching extras: `model-message[bedrock]` or
-`model-message[vertex]` (Azure ships with the base `openai` extra).
+Install the matching extras: `pai-sdk[bedrock]` or
+`pai-sdk[vertex]` (Azure ships with the base `openai` extra).
 
 Configured provider instances:
 
@@ -290,6 +290,19 @@ result = await generate_text(model=..., prompt=..., output=Output.object(schema=
 print(result.output)
 ```
 
+There are also unified entry points that dispatch on intent: `generate(...)`
+and `stream(...)` behave as `generate_object`/`stream_object` when you pass
+`schema=`, and as `generate_text`/`stream_text` otherwise:
+
+```python
+from model_message import generate, stream
+
+result = await generate(model=openai("gpt-5.4"), schema=Recipe, prompt="...")
+result.object                    # validated Recipe
+result = await generate(model=openai("gpt-5.4"), prompt="...")
+result.text                      # plain text result
+```
+
 ## Agent
 
 ```python
@@ -333,6 +346,20 @@ live in the core.
 
 ## Middleware, registry, embeddings, traces
 
+Why each exists:
+
+- **Middleware** — intercept every model call without touching call sites:
+  log/trace rollouts, enforce default settings, cache, extract `<think>`
+  reasoning from models that inline it, or fake streaming for non-streaming
+  backends. It's the hook an optimizer or eval harness attaches to.
+- **Registry & aliases** — name models once (`"aliases:smart"`) and swap the
+  implementation (different provider, wrapped with middleware, candidate
+  under test) in one place instead of every call site.
+- **Embeddings** — similarity for retrieval, dedup, or clustering eval data;
+  same provider abstraction as text models.
+- **Trace helpers** — `dump_messages`/`load_messages` make ModelMessage the
+  log schema: a stored trace is byte-replayable input, not a lossy printout.
+
 ```python
 from model_message import (
     wrap_language_model, extract_reasoning_middleware, default_settings_middleware,
@@ -375,16 +402,31 @@ Prompts as data: JSON/YAML in the codebase or fetched from a service, with
 # prompts/triage.yaml
 name: support-triage
 model: anthropic/claude-haiku-4-5
-params: { max_output_tokens: 500 }
-output:
-  schema: { type: object, properties: { urgency: { type: string } },
-            required: [urgency], additionalProperties: false }
+params:
+  max_output_tokens: 500
+output:                       # field: type shorthand, compiled to JSON Schema
+  urgency: [low, medium, high]   # enum
+  summary: string                # string / number / integer / boolean / string[]
+system: |                     # optimizable by default — this IS the instructions
+  You triage support tickets for {company}. Be decisive.
+user: "Ticket: {ticket}"      # never optimized
+```
+
+That's the simple form. The general form is an explicit `messages:` list —
+use it for multiple system blocks (e.g. frozen policy text next to mutable
+instructions), few-shot assistant turns, or per-message `optimize`/`id`
+control — and `output: {schema: {...}}` accepts full JSON Schema:
+
+```yaml
 messages:
   - id: instructions
     role: system
     optimize: true          # reflection (e.g. GEPA) MAY rewrite this text
     template: |
       You triage support tickets for {company}. Be decisive.
+  - id: policy
+    role: system
+    content: "Never reveal internal data."   # literal — never touched
   - id: ticket
     role: user
     template: "Ticket: {ticket}"

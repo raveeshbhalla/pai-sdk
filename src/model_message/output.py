@@ -343,3 +343,45 @@ def stream_object(
     spec = Output.object(schema, name=name, description=description)
     result = stream_text(model=model, output=spec, **kwargs)
     return StreamObjectResult(result)
+
+
+# ---------------------------------------------------------------------------
+# Unified entry points — dispatch on what the call expects
+# ---------------------------------------------------------------------------
+
+
+async def generate(
+    *,
+    model: Any,
+    schema: Optional[ObjectSchema] = None,
+    **kwargs: Any,
+):
+    """One entry point for text and structured generation.
+
+    With `schema=`, behaves as generate_object() and returns a
+    GenerateObjectResult (validated `.object`). Without it, behaves as
+    generate_text() and returns a GenerateTextResult (`.text`, tools, steps —
+    pass `output=Output.object(...)` for structured output WITH the full
+    text-result surface).
+    """
+    if schema is not None:
+        return await generate_object(model=model, schema=schema, **kwargs)
+    from .generate import generate_text
+
+    return await generate_text(model=model, **kwargs)
+
+
+def stream(
+    *,
+    model: Any,
+    schema: Optional[ObjectSchema] = None,
+    **kwargs: Any,
+):
+    """Streaming twin of generate(): schema= -> stream_object()
+    (StreamObjectResult with partial_object_stream), else stream_text()
+    (StreamTextResult with text_stream/full_stream)."""
+    if schema is not None:
+        return stream_object(model=model, schema=schema, **kwargs)
+    from .generate import stream_text
+
+    return stream_text(model=model, **kwargs)
