@@ -126,7 +126,7 @@ def test_source_part_round_trip():
 
 @pytest.mark.asyncio
 async def test_generate_result_sources():
-    from tests.conftest import FakeModel
+    from conftest import FakeModel
 
     src = UrlSourcePart(id="s1", url="https://example.com", title="Example")
     model = FakeModel(
@@ -180,7 +180,7 @@ def test_generated_file_accessors():
 
 @pytest.mark.asyncio
 async def test_generate_result_files():
-    from tests.conftest import FakeModel
+    from conftest import FakeModel
 
     model = FakeModel(
         steps=[
@@ -226,7 +226,7 @@ async def test_stream_result_files():
 @pytest.mark.asyncio
 async def test_provider_executed_tool_not_run_locally():
     from pai_sdk import tool
-    from tests.conftest import FakeModel
+    from conftest import FakeModel
 
     executed = {"count": 0}
 
@@ -320,7 +320,7 @@ def test_call_warning_coercion():
 
 @pytest.mark.asyncio
 async def test_engine_coerces_string_warnings():
-    from tests.conftest import FakeModel
+    from conftest import FakeModel
 
     model = FakeModel(
         steps=[
@@ -376,7 +376,7 @@ def test_usage_detail_addition():
 
 @pytest.mark.asyncio
 async def test_generate_request_echo():
-    from tests.conftest import FakeModel
+    from conftest import FakeModel
 
     model = FakeModel(
         steps=[
@@ -568,7 +568,7 @@ def test_tool_approval_response_in_tool_content():
 async def test_loop_inert_with_approval_request():
     """An assistant approval-request part must not break the loop or be
     treated as a tool call."""
-    from tests.conftest import FakeModel
+    from conftest import FakeModel
 
     model = FakeModel(
         steps=[
