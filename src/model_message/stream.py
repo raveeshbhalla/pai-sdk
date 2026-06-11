@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional, Union
 
-from .messages import ToolCallPart, ToolResultOutput
+from .messages import SourcePart, ToolCallPart, ToolResultOutput
 from .results import FinishReason, ResponseMetadata, Usage
 
 
@@ -102,7 +102,19 @@ class ToolResultEvent:
     input: Any
     output: Any
     model_output: Optional[ToolResultOutput] = None
+    provider_executed: Optional[bool] = None
     type: Literal["tool-result"] = "tool-result"
+
+
+@dataclass
+class SourceStreamPart:
+    """A source citation surfaced mid-stream (AI SDK source part).
+
+    Carries an already-validated UrlSourcePart/DocumentSourcePart in `source`.
+    """
+
+    source: "SourcePart"
+    type: Literal["source"] = "source"
 
 
 @dataclass
@@ -123,10 +135,15 @@ class FilePartEvent:
 
 @dataclass
 class ResponseMetadataPart:
-    """Provider-internal: response id/model/timestamp, surfaced mid-stream."""
+    """Provider-internal: response id/model/timestamp, surfaced mid-stream.
+
+    Adapters may attach the JSON-able `request` body they built; the stream
+    loop copies it onto the step and FinishStep.
+    """
 
     id: Optional[str] = None
     model_id: Optional[str] = None
+    request: Any = None
     type: Literal["response-metadata"] = "response-metadata"
 
 
@@ -137,6 +154,7 @@ class FinishStep:
     finish_reason: FinishReason
     raw_finish_reason: Optional[str] = None
     provider_metadata: Optional[dict[str, Any]] = None
+    request: Any = None
     type: Literal["finish-step"] = "finish-step"
 
 
@@ -176,6 +194,7 @@ TextStreamPart = Union[
     ToolResultEvent,
     ToolErrorEvent,
     FilePartEvent,
+    SourceStreamPart,
     FinishStep,
     Finish,
     ErrorPart,
@@ -196,6 +215,8 @@ ProviderStreamPart = Union[
     ToolInputEnd,
     ToolCallPart,
     FilePartEvent,
+    SourceStreamPart,
+    ToolResultEvent,
     ResponseMetadataPart,
     Finish,
     ErrorPart,

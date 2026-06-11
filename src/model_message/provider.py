@@ -46,6 +46,8 @@ class CallOptions:
     response_format: Optional[dict[str, Any]] = None  # {"type": "json", "schema": ...}
     headers: Optional[dict[str, str]] = None
     provider_options: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # When True, providers should emit RawPart parts for raw provider chunks.
+    include_raw_chunks: bool = False
 
 
 @dataclass
@@ -57,8 +59,12 @@ class ProviderResult:
     usage: Usage
     raw_finish_reason: Optional[str] = None
     response: ResponseMetadata = field(default_factory=ResponseMetadata)
-    warnings: list[str] = field(default_factory=list)
+    # Accepts CallWarning instances, plain strings, or dicts; the engine
+    # coerces them to CallWarning (see results.coerce_warnings).
+    warnings: list[Any] = field(default_factory=list)
     provider_metadata: Optional[dict[str, dict[str, Any]]] = None
+    # The JSON-able request body the adapter sent (echoed onto results).
+    request: Any = None
 
 
 class LanguageModel(ABC):

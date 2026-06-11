@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64 as _base64
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Optional, Union
@@ -10,6 +11,7 @@ from .messages import (
     AssistantContentPart,
     ModelMessage,
     ReasoningPart,
+    SourcePart,
     ToolCallPart,
     ToolResultOutput,
 )
@@ -17,6 +19,52 @@ from .messages import (
 FinishReason = Literal[
     "stop", "length", "content-filter", "tool-calls", "error", "other", "unknown"
 ]
+
+
+def _add_opt(a: Optional[int], b: Optional[int]) -> Optional[int]:
+    if a is None and b is None:
+        return None
+    return (a or 0) + (b or 0)
+
+
+@dataclass
+class InputTokenDetails:
+    """Breakdown of input tokens (AI SDK v6)."""
+
+    no_cache_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
+
+    def __add__(self, other: "InputTokenDetails") -> "InputTokenDetails":
+        return InputTokenDetails(
+            no_cache_tokens=_add_opt(self.no_cache_tokens, other.no_cache_tokens),
+            cache_read_tokens=_add_opt(self.cache_read_tokens, other.cache_read_tokens),
+            cache_write_tokens=_add_opt(self.cache_write_tokens, other.cache_write_tokens),
+        )
+
+
+@dataclass
+class OutputTokenDetails:
+    """Breakdown of output tokens (AI SDK v6)."""
+
+    text_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
+
+    def __add__(self, other: "OutputTokenDetails") -> "OutputTokenDetails":
+        return OutputTokenDetails(
+            text_tokens=_add_opt(self.text_tokens, other.text_tokens),
+            reasoning_tokens=_add_opt(self.reasoning_tokens, other.reasoning_tokens),
+        )
+
+
+def _add_details(a: Any, b: Any) -> Any:
+    if a is None and b is None:
+        return None
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a + b
 
 
 @dataclass
@@ -28,20 +76,73 @@ class Usage:
     total_tokens: Optional[int] = None
     reasoning_tokens: Optional[int] = None
     cached_input_tokens: Optional[int] = None
+    input_token_details: Optional[InputTokenDetails] = None
+    output_token_details: Optional[OutputTokenDetails] = None
 
     def __add__(self, other: "Usage") -> "Usage":
-        def add(a: Optional[int], b: Optional[int]) -> Optional[int]:
-            if a is None and b is None:
-                return None
-            return (a or 0) + (b or 0)
-
         return Usage(
-            input_tokens=add(self.input_tokens, other.input_tokens),
-            output_tokens=add(self.output_tokens, other.output_tokens),
-            total_tokens=add(self.total_tokens, other.total_tokens),
-            reasoning_tokens=add(self.reasoning_tokens, other.reasoning_tokens),
-            cached_input_tokens=add(self.cached_input_tokens, other.cached_input_tokens),
+            input_tokens=_add_opt(self.input_tokens, other.input_tokens),
+            output_tokens=_add_opt(self.output_tokens, other.output_tokens),
+            total_tokens=_add_opt(self.total_tokens, other.total_tokens),
+            reasoning_tokens=_add_opt(self.reasoning_tokens, other.reasoning_tokens),
+            cached_input_tokens=_add_opt(
+                self.cached_input_tokens, other.cached_input_tokens
+            ),
+            input_token_details=_add_details(
+                self.input_token_details, other.input_token_details
+            ),
+            output_token_details=_add_details(
+                self.output_token_details, other.output_token_details
+            ),
         )
+
+
+@dataclass
+class CallWarning:
+    """A structured warning from a provider (AI SDK CallWarning)."""
+
+    type: Literal["unsupported-setting", "unsupported-tool", "other"]
+    setting: Optional[str] = None
+    message: Optional[str] = None
+
+    @staticmethod
+    def coerce(value: Any) -> "CallWarning":
+        """Accept a CallWarning, a plain string, or a dict and normalize it."""
+        if isinstance(value, CallWarning):
+            return value
+        if isinstance(value, str):
+            return CallWarning(type="other", message=value)
+        if isinstance(value, dict):
+            return CallWarning(
+                type=value.get("type", "other"),
+                setting=value.get("setting"),
+                message=value.get("message"),
+            )
+        return CallWarning(type="other", message=str(value))
+
+
+def coerce_warnings(values: Optional[list[Any]]) -> list["CallWarning"]:
+    """Normalize a list of warnings (strings/dicts/CallWarning) to CallWarning."""
+    if not values:
+        return []
+    return [CallWarning.coerce(v) for v in values]
+
+
+@dataclass
+class GeneratedFile:
+    """A file produced by the model (AI SDK GeneratedFile)."""
+
+    data: bytes
+    media_type: str
+
+    @property
+    def base64(self) -> str:
+        return _base64.b64encode(self.data).decode()
+
+    @property
+    def bytes(self) -> bytes:
+        """The raw bytes (AI SDK `.uint8Array` analog)."""
+        return self.data
 
 
 @dataclass
@@ -68,6 +169,7 @@ class ToolResult:
     output: Any
     model_output: Optional[ToolResultOutput] = None
     is_error: bool = False
+    provider_executed: bool = False
 
 
 @dataclass
@@ -83,9 +185,12 @@ class StepResult:
     finish_reason: FinishReason
     raw_finish_reason: Optional[str]
     usage: Usage
-    warnings: list[str]
+    warnings: list[CallWarning]
     response: ResponseMetadata
     provider_metadata: Optional[dict[str, dict[str, Any]]] = None
+    sources: list[SourcePart] = field(default_factory=list)
+    files: list[GeneratedFile] = field(default_factory=list)
+    request: Any = None
 
 
 @dataclass
@@ -104,11 +209,14 @@ class GenerateTextResult:
     total_usage: Usage
     steps: list[StepResult]
     response: ResponseMetadata
-    warnings: list[str]
+    warnings: list[CallWarning]
     provider_metadata: Optional[dict[str, dict[str, Any]]] = None
     # Parsed structured output when an object output spec was given (AI SDK
     # experimental_output). None otherwise.
     output: Any = None
+    sources: list[SourcePart] = field(default_factory=list)
+    files: list[GeneratedFile] = field(default_factory=list)
+    request: Any = None
 
 
 ToolChoice = Union[

@@ -19,6 +19,7 @@ from .errors import APICallError
 from .messages import (
     AssistantContentPart,
     AssistantModelMessage,
+    DocumentSourcePart,
     ErrorTextOutput,
     FilePart,
     ModelMessage,
@@ -27,16 +28,20 @@ from .messages import (
     ToolCallPart,
     ToolModelMessage,
     ToolResultPart,
+    UrlSourcePart,
 )
 from .provider import CallOptions, FunctionToolSpec, LanguageModel, ProviderResult
 from .results import (
+    CallWarning,
     FinishReason,
+    GeneratedFile,
     GenerateTextResult,
     ResponseMetadata,
     StepResult,
     ToolChoice,
     ToolResult,
     Usage,
+    coerce_warnings,
 )
 from .stream import (
     ErrorPart,
@@ -48,6 +53,7 @@ from .stream import (
     ReasoningEnd,
     ReasoningStart,
     ResponseMetadataPart,
+    SourceStreamPart,
     StartStep,
     StreamStart,
     TextDelta,
@@ -60,6 +66,8 @@ from .stream import (
     ToolInputStart,
     ToolResultEvent,
 )
+
+_SOURCE_TYPES = (UrlSourcePart, DocumentSourcePart)
 from .tools import Tool, ToolCallOptions, ToolSet, output_to_model_output
 
 # ---------------------------------------------------------------------------
@@ -147,6 +155,8 @@ async def _execute_tool_calls(
         return []
 
     async def run_one(call: ToolCallPart) -> Optional[ToolResult]:
+        if call.provider_executed:
+            return None  # already executed by the provider
         tool_def = tools.get(call.tool_name)
         if tool_def is None or tool_def.execute is None:
             return None  # client-side tool: caller handles it
@@ -197,6 +207,36 @@ def _step_messages(
     return new_messages
 
 
+def _provider_executed_results(
+    content: list[AssistantContentPart],
+) -> list[ToolResult]:
+    """Surface provider-executed ToolResultPart entries (in assistant content)
+    as ToolResult entries with provider_executed=True."""
+    results: list[ToolResult] = []
+    for p in content:
+        if isinstance(p, ToolResultPart) and p.provider_executed:
+            is_error = getattr(p.output, "type", None) in (
+                "error-text",
+                "error-json",
+            )
+            results.append(
+                ToolResult(
+                    tool_call_id=p.tool_call_id,
+                    tool_name=p.tool_name,
+                    input=None,
+                    output=getattr(p.output, "value", None),
+                    model_output=p.output,
+                    is_error=is_error,
+                    provider_executed=True,
+                )
+            )
+    return results
+
+
+def _collect_sources(content: list[AssistantContentPart]) -> list:
+    return [p for p in content if isinstance(p, _SOURCE_TYPES)]
+
+
 def _build_step_result(
     content: list[AssistantContentPart],
     tool_results: list[ToolResult],
@@ -204,34 +244,64 @@ def _build_step_result(
     raw_finish_reason: Optional[str],
     usage: Usage,
     response: ResponseMetadata,
-    warnings: list[str],
+    warnings: list[Any],
     provider_metadata: Optional[dict[str, dict[str, Any]]],
+    files: Optional[list[GeneratedFile]] = None,
+    request: Any = None,
 ) -> StepResult:
     text = "".join(p.text for p in content if isinstance(p, TextPart))
     reasoning = [p for p in content if isinstance(p, ReasoningPart)]
+    # Provider-executed tool results live in assistant content; surface them.
+    all_results = _provider_executed_results(content) + list(tool_results)
+    collected_files = files if files is not None else _files_from_content(content)
     return StepResult(
         content=content,
         text=text,
         reasoning=reasoning,
         reasoning_text="".join(p.text for p in reasoning) or None,
         tool_calls=[p for p in content if isinstance(p, ToolCallPart)],
-        tool_results=tool_results,
+        tool_results=all_results,
         finish_reason=finish_reason,
         raw_finish_reason=raw_finish_reason,
         usage=usage,
-        warnings=warnings,
+        warnings=coerce_warnings(warnings),
         response=response,
         provider_metadata=provider_metadata,
+        sources=_collect_sources(content),
+        files=collected_files,
+        request=request,
     )
 
 
+def _files_from_content(content: list[AssistantContentPart]) -> list[GeneratedFile]:
+    """Convert FilePart entries in content into GeneratedFile (result.files).
+
+    Mirrors AI SDK: content keeps file parts; result.files exposes GeneratedFile.
+    Only inline-byte file parts become GeneratedFile.
+    """
+    files: list[GeneratedFile] = []
+    for p in content:
+        if isinstance(p, FilePart) and isinstance(p.data, (bytes, bytearray)):
+            files.append(
+                GeneratedFile(data=bytes(p.data), media_type=p.media_type)
+            )
+    return files
+
+
 def _should_continue(step: StepResult) -> bool:
-    """Continue the loop only if the model asked for tools and every call got
-    an executed result we can send back."""
+    """Continue the loop only if the model asked for tools and every
+    locally-executed call got a result we can send back. Provider-executed
+    calls already have their results in assistant content and do not require a
+    local result."""
     if step.finish_reason != "tool-calls" or not step.tool_calls:
         return False
-    result_ids = {r.tool_call_id for r in step.tool_results}
-    return all(c.tool_call_id in result_ids for c in step.tool_calls)
+    local_calls = [c for c in step.tool_calls if not c.provider_executed]
+    if not local_calls:
+        return False
+    result_ids = {
+        r.tool_call_id for r in step.tool_results if not r.provider_executed
+    }
+    return all(c.tool_call_id in result_ids for c in local_calls)
 
 
 async def _with_retry(
@@ -328,6 +398,7 @@ async def generate_text(
             response=result.response,
             warnings=result.warnings,
             provider_metadata=result.provider_metadata,
+            request=result.request,
         )
         steps.append(step)
         total_usage = total_usage + step.usage
@@ -365,6 +436,12 @@ async def generate_text(
             exc.usage = final.usage
             raise
 
+    all_sources: list = []
+    all_files: list[GeneratedFile] = []
+    for s in steps:
+        all_sources.extend(s.sources)
+        all_files.extend(s.files)
+
     return GenerateTextResult(
         text=final.text,
         content=final.content,
@@ -381,6 +458,9 @@ async def generate_text(
         warnings=final.warnings,
         provider_metadata=final.provider_metadata,
         output=parsed_output,
+        sources=all_sources,
+        files=all_files,
+        request=final.request,
     )
 
 
@@ -549,6 +629,28 @@ class StreamTextResult:
         return get()
 
     @property
+    def sources(self) -> Awaitable[list]:
+        async def get() -> list:
+            await self._wait_done()
+            out: list = []
+            for s in self.steps:
+                out.extend(s.sources)
+            return out
+
+        return get()
+
+    @property
+    def files(self) -> Awaitable[list[GeneratedFile]]:
+        async def get() -> list[GeneratedFile]:
+            await self._wait_done()
+            out: list[GeneratedFile] = []
+            for s in self.steps:
+                out.extend(s.files)
+            return out
+
+        return get()
+
+    @property
     def finish_reason(self) -> Awaitable[FinishReason]:
         async def get() -> FinishReason:
             await self._wait_done()
@@ -666,6 +768,7 @@ def stream_text(
     stop_when: Union[StopCondition, Sequence[StopCondition], None] = None,
     provider_options: Optional[dict[str, dict[str, Any]]] = None,
     output: Optional[Any] = None,
+    include_raw_chunks: bool = False,
     on_chunk: Optional[Callable[[TextStreamPart], Any]] = None,
     on_error: Optional[Callable[[Any], Any]] = None,
     on_step_finish: Optional[Callable[[StepResult], Any]] = None,
@@ -707,6 +810,7 @@ def stream_text(
                 response_format=response_format,
                 headers=headers,
                 provider_options=provider_options or {},
+                include_raw_chunks=include_raw_chunks,
             )
             await result._emit(StartStep())
 
@@ -718,11 +822,15 @@ def stream_text(
             usage = Usage()
             response_meta = ResponseMetadata()
             provider_metadata: Optional[dict[str, dict[str, Any]]] = None
+            step_files: list[GeneratedFile] = []
+            step_request: Any = None
 
             async for part in resolved.do_stream(options):
                 if isinstance(part, ResponseMetadataPart):
                     response_meta.id = part.id or response_meta.id
                     response_meta.model_id = part.model_id or response_meta.model_id
+                    if part.request is not None:
+                        step_request = part.request
                     continue
                 if isinstance(part, Finish):
                     finish_reason = part.finish_reason
@@ -764,6 +872,25 @@ def stream_text(
                     content.append(part)
                 elif isinstance(part, FilePartEvent):
                     content.append(FilePart(data=part.data, media_type=part.media_type))
+                    step_files.append(
+                        GeneratedFile(data=part.data, media_type=part.media_type)
+                    )
+                elif isinstance(part, SourceStreamPart):
+                    content.append(part.source)
+                elif isinstance(part, ToolResultEvent):
+                    # Provider-executed tool result yielded directly from the
+                    # provider stream: surface it as assistant content so it is
+                    # recorded on the step (via _provider_executed_results) and
+                    # replayed in history, but not re-sent as a tool message.
+                    content.append(
+                        ToolResultPart(
+                            tool_call_id=part.tool_call_id,
+                            tool_name=part.tool_name,
+                            output=part.model_output
+                            or ErrorTextOutput(value="missing output"),
+                            provider_executed=True,
+                        )
+                    )
 
                 await result._emit(part)
 
@@ -798,6 +925,8 @@ def stream_text(
                 response=response_meta,
                 warnings=[],
                 provider_metadata=provider_metadata,
+                files=step_files,
+                request=step_request,
             )
             result.steps.append(step)
             result._total_usage = result._total_usage + usage
@@ -812,6 +941,7 @@ def stream_text(
                     usage=usage,
                     finish_reason=finish_reason,
                     raw_finish_reason=raw_finish_reason,
+                    request=step_request,
                 )
             )
             if on_step_finish is not None:
