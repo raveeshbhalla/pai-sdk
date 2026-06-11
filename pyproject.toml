@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "model-message"
+version = "0.1.0"
+description = "AI-SDK-style ModelMessage types and generate_text/stream_text for Python, with OpenAI, Anthropic, Gemini, and OpenRouter providers."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Raveesh Bhalla" }]
+dependencies = [
+    "pydantic>=2.7",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.60"]
+anthropic = ["anthropic>=0.40"]
+google = ["google-genai>=1.0"]
+all = ["openai>=1.60", "anthropic>=0.40", "google-genai>=1.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/model_message"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]

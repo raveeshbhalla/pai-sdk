@@ -1,0 +1,176 @@
+"""model-message — AI SDK ergonomics (ModelMessage, generate_text, stream_text)
+for Python, with OpenAI, Anthropic, Google Gemini, and OpenRouter providers.
+
+    from model_message import generate_text
+    from model_message.providers import anthropic
+
+    result = await generate_text(
+        model=anthropic("claude-opus-4-8"),
+        prompt="What is the capital of France?",
+    )
+    print(result.text)
+"""
+
+from .errors import (
+    AISDKError,
+    APICallError,
+    InvalidPromptError,
+    InvalidToolInputError,
+    MissingDependencyError,
+    NoSuchProviderError,
+    NoSuchToolError,
+)
+from .generate import (
+    StreamTextResult,
+    generate_id,
+    generate_text,
+    has_tool_call,
+    step_count_is,
+    stream_text,
+)
+from .messages import (
+    AssistantContent,
+    AssistantModelMessage,
+    ContentOutput,
+    DataContent,
+    ErrorJsonOutput,
+    ErrorTextOutput,
+    FilePart,
+    ImagePart,
+    JsonOutput,
+    MediaContentItem,
+    ModelMessage,
+    ProviderOptions,
+    ReasoningPart,
+    SystemModelMessage,
+    TextContentItem,
+    TextOutput,
+    TextPart,
+    ToolCallPart,
+    ToolContent,
+    ToolModelMessage,
+    ToolResultOutput,
+    ToolResultPart,
+    UserContent,
+    UserModelMessage,
+    model_message_adapter,
+    model_messages_adapter,
+)
+from .provider import CallOptions, FunctionToolSpec, LanguageModel, ProviderResult
+from .results import (
+    FinishReason,
+    GenerateTextResult,
+    ResponseMetadata,
+    StepResult,
+    ToolChoice,
+    ToolResult,
+    Usage,
+)
+from .stream import (
+    ErrorPart,
+    Finish,
+    FinishStep,
+    FilePartEvent,
+    RawPart,
+    ReasoningDelta,
+    ReasoningEnd,
+    ReasoningStart,
+    ResponseMetadataPart,
+    StartStep,
+    StreamStart,
+    TextDelta,
+    TextEnd,
+    TextStart,
+    TextStreamPart,
+    ToolErrorEvent,
+    ToolInputDelta,
+    ToolInputEnd,
+    ToolInputStart,
+    ToolResultEvent,
+)
+from .tools import Tool, ToolCallOptions, ToolSet, tool
+
+__version__ = "0.1.0"
+
+__all__ = [
+    # core functions
+    "generate_text",
+    "stream_text",
+    "StreamTextResult",
+    "tool",
+    "Tool",
+    "ToolSet",
+    "ToolCallOptions",
+    "step_count_is",
+    "has_tool_call",
+    "generate_id",
+    # messages & parts
+    "ModelMessage",
+    "SystemModelMessage",
+    "UserModelMessage",
+    "AssistantModelMessage",
+    "ToolModelMessage",
+    "UserContent",
+    "AssistantContent",
+    "ToolContent",
+    "TextPart",
+    "ImagePart",
+    "FilePart",
+    "ReasoningPart",
+    "ToolCallPart",
+    "ToolResultPart",
+    "ToolResultOutput",
+    "TextOutput",
+    "JsonOutput",
+    "ErrorTextOutput",
+    "ErrorJsonOutput",
+    "ContentOutput",
+    "TextContentItem",
+    "MediaContentItem",
+    "DataContent",
+    "ProviderOptions",
+    "model_message_adapter",
+    "model_messages_adapter",
+    # results
+    "GenerateTextResult",
+    "StepResult",
+    "ToolResult",
+    "Usage",
+    "FinishReason",
+    "ResponseMetadata",
+    "ToolChoice",
+    # stream parts
+    "TextStreamPart",
+    "StreamStart",
+    "StartStep",
+    "TextStart",
+    "TextDelta",
+    "TextEnd",
+    "ReasoningStart",
+    "ReasoningDelta",
+    "ReasoningEnd",
+    "ToolInputStart",
+    "ToolInputDelta",
+    "ToolInputEnd",
+    "ToolResultEvent",
+    "ToolErrorEvent",
+    "FilePartEvent",
+    "ResponseMetadataPart",
+    "FinishStep",
+    "Finish",
+    "ErrorPart",
+    "RawPart",
+    # provider interface
+    "LanguageModel",
+    "CallOptions",
+    "ProviderResult",
+    "FunctionToolSpec",
+    # errors
+    "AISDKError",
+    "APICallError",
+    "NoSuchToolError",
+    "InvalidToolInputError",
+    "InvalidPromptError",
+    "NoSuchProviderError",
+    "MissingDependencyError",
+]
