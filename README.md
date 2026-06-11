@@ -8,8 +8,8 @@ pip install "pai-sdk[anthropic]"  # or pick: openai / anthropic / google / bedro
 ## Quick start
 ```python
 import asyncio
-from model_message import generate_text
-from model_message.providers import anthropic
+from pai_sdk import generate_text
+from pai_sdk.providers import anthropic
 
 async def main():
     result = await generate_text(
@@ -25,7 +25,7 @@ asyncio.run(main())
 API keys come from the environment: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `OPENROUTER_API_KEY`.
 ## Choosing a model
 ```python
-from model_message.providers import (
+from pai_sdk.providers import (
     openai, anthropic, google, openrouter, bedrock, vertex, azure,
 )
 
@@ -62,7 +62,7 @@ Install the matching extras: `pai-sdk[bedrock]` or `pai-sdk[vertex]` (Azure ship
 Configured provider instances:
 
 ```python
-from model_message.providers import (
+from pai_sdk.providers import (
     create_openai, create_openrouter, create_bedrock, create_vertex, create_azure,
 )
 
@@ -76,7 +76,7 @@ my_azure = create_azure(azure_endpoint="https://my.openai.azure.com", api_versio
 The same message union as the AI SDK — `system` / `user` / `assistant` / `tool` roles, discriminated content parts. Plain dicts and typed classes are interchangeable; serialized JSON is camelCase and wire-compatible with the TypeScript AI SDK.
 
 ```python
-from model_message import (
+from pai_sdk import (
     SystemModelMessage, UserModelMessage, AssistantModelMessage, ToolModelMessage,
     TextPart, ImagePart, FilePart, ReasoningPart, ToolCallPart, ToolResultPart,
 )
@@ -109,8 +109,8 @@ Multimodal support per provider: images everywhere; PDFs to Anthropic, OpenAI, G
 ## Tools and the agent loop
 ```python
 from pydantic import BaseModel
-from model_message import generate_text, tool, step_count_is
-from model_message.providers import openai
+from pai_sdk import generate_text, tool, step_count_is
+from pai_sdk.providers import openai
 
 class WeatherInput(BaseModel):
     city: str
@@ -151,8 +151,8 @@ history = [*messages, *result.response.messages]
 ```
 ## Streaming
 ```python
-from model_message import stream_text
-from model_message.providers import anthropic
+from pai_sdk import stream_text
+from pai_sdk.providers import anthropic
 
 result = stream_text(
     model=anthropic("claude-opus-4-8"),
@@ -250,7 +250,7 @@ Parameters a provider doesn't support are reported as `CallWarning`s in `result.
 ## Structured output
 ```python
 from pydantic import BaseModel
-from model_message import generate_object, stream_object, Output, generate_text
+from pai_sdk import generate_object, stream_object, Output, generate_text
 
 class Recipe(BaseModel):
     name: str
@@ -272,7 +272,7 @@ print(result.output)
 The DSPy-module-style "it just knows" dispatch lives on **prompt configs**: a `Prompt` declares its output signature, so `prompt.generate(variables)` needs no flags — it returns text when the config has no `output:`, and a schema-validated object when it does (see [Typed messages & prompt configs](#typed-messages--prompt-configs)). The standalone unified entry points `generate(...)` / `stream(...)` are for ad-hoc calls where there is no config carrying the signature — there, `schema=` *is* the signature (Python can't see the expected return type at runtime), and its presence selects the object path:
 
 ```python
-from model_message import generate, stream
+from pai_sdk import generate, stream
 
 result = await generate(model=openai("gpt-5.4"), schema=Recipe, prompt="...")
 result.object                    # validated Recipe
@@ -281,7 +281,7 @@ result.text                      # plain text result
 ```
 ## Agent
 ```python
-from model_message import Agent
+from pai_sdk import Agent
 
 agent = Agent(
     model=anthropic("claude-opus-4-8"),
@@ -322,7 +322,7 @@ Why each exists:
   
 
 ```python
-from model_message import (
+from pai_sdk import (
     wrap_language_model, extract_reasoning_middleware, default_settings_middleware,
     create_provider_registry, custom_provider,
     embed_many, cosine_similarity,
@@ -350,10 +350,14 @@ text = dump_messages_json([*messages, *result.response.messages])
 history = load_messages(text)   # ready to re-send
 ```
 ## Typed messages & prompt configs
-Prompts as data: JSON/YAML in the codebase or fetched from a service, with `{variable}` slots and an explicit optimization contract.
+
+Prompts as data: define them in YAML or JSON (in the codebase or fetched from a service) or directly in code, with `{variable}` slots and an explicit optimization contract. All three forms produce the same `Prompt` object.
+
+### Creating a prompt in YAML
 
 ```yaml
 # prompts/triage.yaml
+# yaml-language-server: $schema=https://<where-you-host-it>/prompt-config.schema.json
 name: support-triage
 model: anthropic/claude-haiku-4-5
 params:
@@ -364,6 +368,12 @@ output:                       # field: type shorthand, compiled to JSON Schema
 system: |                     # optimizable by default — this IS the instructions
   You triage support tickets for {company}. Be decisive.
 user: "Ticket: {ticket}"      # never optimized
+```
+
+```python
+from pai_sdk import load_prompt
+
+prompt = load_prompt("prompts/triage.yaml")
 ```
 
 That's the simple form. The general form is an explicit `messages:` list — use it for multiple system blocks (e.g. frozen policy text next to mutable instructions), few-shot assistant turns, or per-message `optimize`/`id` control — and `output: {schema: {...}}` accepts full JSON Schema:
@@ -383,10 +393,72 @@ messages:
     template: "Ticket: {ticket}"
 ```
 
-```python
-from model_message import load_prompt, load_prompt_url
+YAML needs the `yaml` extra (`pip install "pai-sdk[yaml]"`).
 
-prompt = load_prompt("prompts/triage.yaml")        # or a dict, or await load_prompt_url(...)
+### Creating a prompt in JSON
+
+The same format, JSON-encoded — natural when prompts come from a service or database rather than the repo:
+
+```json
+{
+  "name": "support-triage",
+  "model": "anthropic/claude-haiku-4-5",
+  "params": { "max_output_tokens": 500 },
+  "output": { "urgency": ["low", "medium", "high"], "summary": "string" },
+  "system": "You triage support tickets for {company}. Be decisive.",
+  "user": "Ticket: {ticket}"
+}
+```
+
+```python
+from pai_sdk import load_prompt, load_prompt_url
+
+prompt = load_prompt("prompts/triage.json")                    # local file
+prompt = await load_prompt_url("https://prompts.internal/triage")  # hosted service
+```
+
+Both YAML and JSON are validated by the packaged config schema (`pai_sdk/prompt-config.schema.json`, exported as `PROMPT_CONFIG_SCHEMA`). Point editors at it for autocomplete and red squiggles — the `# yaml-language-server: $schema=...` header above, or VS Code's `json.schemas` for JSON — and run the same schema in CI before prompts ship. It is the file a hosted prompt service should serve.
+
+### Creating a prompt in code
+
+`Prompt` is a Pydantic model — construct it directly (or pass a dict to `load_prompt`); `to_dict()` writes it back out as JSON/YAML-able data:
+
+```python
+from pai_sdk import Prompt, load_prompt
+
+prompt = Prompt(
+    name="support-triage",
+    model="anthropic/claude-haiku-4-5",
+    params={"max_output_tokens": 500},
+    output={"schema": {"type": "object", "properties": {"urgency": {"type": "string"}},
+                       "required": ["urgency"], "additionalProperties": False}},
+    messages=[
+        {"id": "instructions", "role": "system", "optimize": True,
+         "template": "You triage support tickets for {company}. Be decisive."},
+        {"id": "ticket", "role": "user", "template": "Ticket: {ticket}"},
+    ],
+)
+prompt = load_prompt({...})        # dicts work too, simple or general form
+```
+
+Or skip configs entirely and use the typed messages straight in `generate_text` — same trace properties, no file:
+
+```python
+from pai_sdk import TypedSystemMessage, TypedUserMessage, generate_text
+
+result = await generate_text(
+    model=anthropic("claude-haiku-4-5"),
+    messages=[
+        TypedSystemMessage(template="You triage tickets for {company}.",
+                           variables={"company": "Acme"}, optimize=True),
+        TypedUserMessage(template="Ticket: {ticket}", variables={"ticket": "It broke"}),
+    ],
+)
+```
+
+### Running prompts & the optimization contract
+
+```python
 result = await prompt.generate({"company": "Acme", "ticket": "It broke"})
 print(result.output)                               # validated against the schema
 # The optimization contract, enforced:
@@ -397,22 +469,12 @@ evolved.content_hash()                             # candidate identity
 evolved.to_dict()                                  # persist back to JSON/YAML
 ```
 
-The config format ships with a JSON Schema, so customers' editors validate and autocomplete prompt files. Point the YAML language server at it:
-
-```yaml
-# yaml-language-server: $schema=https://<where-you-host-it>/prompt-config.schema.json
-name: support-triage
-...
-```
-
-The schema file is packaged at `model_message/prompt-config.schema.json` (`from model_message import PROMPT_CONFIG_SCHEMA` for the parsed dict — print the path with `python -c "from model_message.prompts import PROMPT_CONFIG_SCHEMA_PATH; print(PROMPT_CONFIG_SCHEMA_PATH)"`), ready to be hosted by a prompt service. The same schema validates configs in CI before they ship.
-
-Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage` — subclasses that carry `template`, `variables`, `optimize`, and `id` alongside the rendered `content`. Providers see plain messages; `dump_messages` traces keep the structure, so logs record _which instructions_ and _which bindings_ produced every rollout. Template syntax is plain `{name}` only (portable to a TS implementation 1:1). YAML needs the `yaml` extra.
+Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage` — subclasses that carry `template`, `variables`, `optimize`, and `id` alongside the rendered `content`. Providers see plain messages; `dump_messages` traces keep the structure, so logs record _which instructions_ and _which bindings_ produced every rollout. Template syntax is plain `{name}` only (portable to a TS implementation 1:1).
 ## Cost estimates
 Adapters normalize every provider's cache/reasoning token accounting into `usage.input_token_details` / `usage.output_token_details`, so one formula prices all of them — uncached input, cache reads, cache writes, and text+reasoning output each at their own rate:
 
 ```python
-from model_message import estimate_cost, register_pricing, ModelPricing
+from pai_sdk import estimate_cost, register_pricing, ModelPricing
 
 result = await generate_text(model=anthropic("claude-haiku-4-5"), ...)
 cost = estimate_cost(result.total_usage, model="claude-haiku-4-5")
