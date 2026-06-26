@@ -66,7 +66,7 @@ from .generate import generate_text, step_count_is, stream_text
 from .tools import tool as make_tool
 from .messages import ModelMessage
 from .output import Output
-from .typed import TYPED_MESSAGE_TYPES, extract_variables
+from .typed import TYPED_MESSAGE_TYPES, escape_template_literals, extract_variables
 
 JSON_EXTENSIONS = (".json",)
 YAML_EXTENSIONS = (".yaml", ".yml")
@@ -374,7 +374,7 @@ class Prompt(BaseModel):
             else:
                 rendered.append(
                     typed_cls(
-                        template=message.content,
+                        template=escape_template_literals(message.content),
                         variables={},
                         optimize=message.optimize,
                         id=message.id,

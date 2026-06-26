@@ -21,7 +21,6 @@ JSON examples and other brace-heavy prompt text natural to write.
 
 from __future__ import annotations
 
-import re
 from typing import Any, Optional
 
 from pydantic import Field, model_validator
@@ -34,8 +33,31 @@ class TemplateError(AISDKError):
     """Invalid template syntax or missing/invalid variables."""
 
 
-_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_TAG_RE = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
+def escape_template_literals(text: str) -> str:
+    """Escape literal Mustache opens so render_template returns the same text."""
+    return text.replace("{{", r"\{{")
+
+
+def _unescape_template_literals(text: str) -> str:
+    return text.replace(r"\{{", "{{")
+
+
+def _iter_tags(template: str):
+    index = 0
+    while True:
+        open_index = template.find("{{", index)
+        if open_index == -1:
+            break
+        if open_index > 0 and template[open_index - 1] == "\\":
+            index = open_index + 2
+            continue
+
+        close_index = template.find("}}", open_index + 2)
+        if close_index == -1:
+            raise TemplateError("Invalid template: unclosed '{{'.")
+
+        yield open_index, close_index + 2, template[open_index + 2 : close_index]
+        index = close_index + 2
 
 
 def extract_variables(template: str) -> list[str]:
@@ -47,26 +69,15 @@ def extract_variables(template: str) -> list[str]:
     keeping templates portable across runtimes.
     """
     names: list[str] = []
-    index = 0
-    while True:
-        open_index = template.find("{{", index)
-        if open_index == -1:
-            break
-
-        close_index = template.find("}}", open_index + 2)
-        if close_index == -1:
-            raise TemplateError("Invalid template: unclosed '{{'.")
-
-        raw_name = template[open_index + 2 : close_index]
+    for _start, _end, raw_name in _iter_tags(template):
         name = raw_name.strip()
-        if not _NAME_RE.match(name):
+        if not name.isidentifier():
             raise TemplateError(
                 "Only plain {{name}} placeholders are supported; "
                 f"got '{{{{{raw_name}}}}}'."
             )
         if name not in names:
             names.append(name)
-        index = close_index + 2
     return names
 
 
@@ -79,10 +90,14 @@ def render_template(template: str, variables: dict[str, Any]) -> str:
             f"Missing template variables: {', '.join(missing)}."
         )
 
-    def replace(match: re.Match[str]) -> str:
-        return str(variables[match.group(1).strip()])
-
-    return _TAG_RE.sub(replace, template)
+    rendered: list[str] = []
+    last_index = 0
+    for start, end, raw_name in _iter_tags(template):
+        rendered.append(_unescape_template_literals(template[last_index:start]))
+        rendered.append(str(variables[raw_name.strip()]))
+        last_index = end
+    rendered.append(_unescape_template_literals(template[last_index:]))
+    return "".join(rendered)
 
 
 class _TypedMixin:

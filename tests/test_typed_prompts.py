@@ -24,6 +24,7 @@ from conftest import FakeModel, text_step
 
 def test_extract_variables_ordered_deduped():
     assert extract_variables("{{a}} then {{ b }} then {{a}}") == ["a", "b"]
+    assert extract_variables("{{café}} then {{ 变量 }}") == ["café", "变量"]
     assert extract_variables("no vars") == []
     assert extract_variables('literal {not_a_var} and {"json": true} but {{real}}') == ["real"]
     assert extract_variables('Return {"user": {"name": "Ada"}} for {{company}}') == ["company"]
@@ -48,6 +49,10 @@ def test_invalid_templates_rejected(bad):
 
 def test_render_template():
     assert render_template("Hi {{ name }}!", {"name": "Ada", "extra": "ok"}) == "Hi Ada!"
+    assert render_template(
+        "Hi {{ café }} and {{变量}}!",
+        {"café": "Ada", "变量": "Lin"},
+    ) == "Hi Ada and Lin!"
     assert render_template('Use JSON like {"literal": true}; x={{x}}', {"x": 1}) == (
         'Use JSON like {"literal": true}; x=1'
     )
@@ -57,6 +62,17 @@ def test_render_template():
     ) == 'Return {"user": {"name": "Ada"}} for Acme'
     with pytest.raises(TemplateError, match="name"):
         render_template("Hi {{name}}!", {})
+
+
+def test_render_template_escaped_mustache_literal():
+    template = r"Use \{{name}} literally, then {{actual}}."
+    assert extract_variables(template) == ["actual"]
+    assert render_template(template, {"actual": "render"}) == (
+        "Use {{name}} literally, then render."
+    )
+    assert render_template("Value: {{actual}}.", {"actual": r"\{{kept}}"}) == (
+        r"Value: \{{kept}}."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +160,26 @@ def test_prompt_render_produces_typed_messages():
     assert messages[2].content == "Ticket: It broke"
     with pytest.raises(PromptError, match="company"):
         prompt.render({"ticket": "x"})
+
+
+def test_prompt_literal_content_with_mustache_examples_is_rerenderable():
+    prompt = load_prompt(
+        {
+            "name": "literal-mustache",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": 'Use {{name}} literally in {"template": true}.',
+                }
+            ],
+        }
+    )
+
+    [message] = prompt.render()
+
+    assert message.content == 'Use {{name}} literally in {"template": true}.'
+    assert message.variables == {}
+    assert render_template(message.template, message.variables) == message.content
 
 
 async def test_prompt_generate_through_engine():
