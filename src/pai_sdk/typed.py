@@ -42,13 +42,22 @@ def _unescape_template_literals(text: str) -> str:
     return text.replace(r"\{{", "{{")
 
 
+def _is_escaped_tag_open(template: str, open_index: int) -> bool:
+    backslash_count = 0
+    index = open_index - 1
+    while index >= 0 and template[index] == "\\":
+        backslash_count += 1
+        index -= 1
+    return backslash_count % 2 == 1
+
+
 def _iter_tags(template: str):
     index = 0
     while True:
         open_index = template.find("{{", index)
         if open_index == -1:
             break
-        if open_index > 0 and template[open_index - 1] == "\\":
+        if _is_escaped_tag_open(template, open_index):
             index = open_index + 2
             continue
 

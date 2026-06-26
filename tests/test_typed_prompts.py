@@ -75,6 +75,12 @@ def test_render_template_escaped_mustache_literal():
     )
 
 
+def test_render_template_backslash_before_placeholder():
+    template = r"C:\\{{folder}}"
+    assert extract_variables(template) == ["folder"]
+    assert render_template(template, {"folder": "Users"}) == r"C:\\Users"
+
+
 # ---------------------------------------------------------------------------
 # Typed messages
 # ---------------------------------------------------------------------------
