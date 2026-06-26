@@ -50,9 +50,6 @@ def extract_variables(template: str) -> list[str]:
     index = 0
     while True:
         open_index = template.find("{{", index)
-        close_index = template.find("}}", index)
-        if close_index != -1 and (open_index == -1 or close_index < open_index):
-            raise TemplateError("Invalid template: unexpected '}}'.")
         if open_index == -1:
             break
 

@@ -26,6 +26,7 @@ def test_extract_variables_ordered_deduped():
     assert extract_variables("{{a}} then {{ b }} then {{a}}") == ["a", "b"]
     assert extract_variables("no vars") == []
     assert extract_variables('literal {not_a_var} and {"json": true} but {{real}}') == ["real"]
+    assert extract_variables('Return {"user": {"name": "Ada"}} for {{company}}') == ["company"]
 
 
 @pytest.mark.parametrize(
@@ -38,7 +39,6 @@ def test_extract_variables_ordered_deduped():
         "{{a:>10}}",
         "{{a!r}}",
         "{{unclosed",
-        "unopened}}",
     ],
 )
 def test_invalid_templates_rejected(bad):
@@ -51,6 +51,10 @@ def test_render_template():
     assert render_template('Use JSON like {"literal": true}; x={{x}}', {"x": 1}) == (
         'Use JSON like {"literal": true}; x=1'
     )
+    assert render_template(
+        'Return {"user": {"name": "Ada"}} for {{company}}',
+        {"company": "Acme"},
+    ) == 'Return {"user": {"name": "Ada"}} for Acme'
     with pytest.raises(TemplateError, match="name"):
         render_template("Hi {{name}}!", {})
 
