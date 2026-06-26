@@ -35,7 +35,21 @@ class TemplateError(AISDKError):
 
 def escape_template_literals(text: str) -> str:
     """Escape literal Mustache opens so render_template returns the same text."""
-    return text.replace("{{", r"\{{")
+    escaped: list[str] = []
+    index = 0
+    while True:
+        open_index = text.find("{{", index)
+        if open_index == -1:
+            escaped.append(text[index:])
+            break
+
+        backslash_count = _count_preceding_backslashes(text, open_index)
+        backslashes_start = open_index - backslash_count
+        escaped.append(text[index:backslashes_start])
+        escaped.append("\\" * (backslash_count * 2 + 1))
+        escaped.append("{{")
+        index = open_index + 2
+    return "".join(escaped)
 
 
 def _count_preceding_backslashes(template: str, open_index: int) -> int:

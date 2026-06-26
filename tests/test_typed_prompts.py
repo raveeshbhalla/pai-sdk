@@ -191,6 +191,23 @@ def test_prompt_literal_content_with_mustache_examples_is_rerenderable():
     assert render_template(message.template, message.variables) == message.content
 
 
+def test_prompt_literal_content_with_backslash_mustache_is_rerenderable():
+    content = r"Use \{{name}} literally in examples."
+    prompt = load_prompt(
+        {
+            "name": "literal-backslash-mustache",
+            "messages": [{"role": "system", "content": content}],
+        }
+    )
+
+    [message] = prompt.render()
+
+    assert message.content == content
+    assert message.variables == {}
+    assert extract_variables(message.template) == []
+    assert render_template(message.template, message.variables) == content
+
+
 async def test_prompt_generate_through_engine():
     prompt = load_prompt(CONFIG)
     model = FakeModel(steps=[text_step('{"urgency": "high"}')])
