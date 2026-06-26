@@ -38,17 +38,52 @@ def escape_template_literals(text: str) -> str:
     return text.replace("{{", r"\{{")
 
 
-def _unescape_template_literals(text: str) -> str:
-    return text.replace(r"\{{", "{{")
-
-
-def _is_escaped_tag_open(template: str, open_index: int) -> bool:
+def _count_preceding_backslashes(template: str, open_index: int) -> int:
     backslash_count = 0
     index = open_index - 1
     while index >= 0 and template[index] == "\\":
         backslash_count += 1
         index -= 1
-    return backslash_count % 2 == 1
+    return backslash_count
+
+
+def _unescape_template_literals(text: str) -> str:
+    rendered: list[str] = []
+    index = 0
+    while True:
+        open_index = text.find("{{", index)
+        if open_index == -1:
+            rendered.append(text[index:])
+            break
+
+        backslash_count = _count_preceding_backslashes(text, open_index)
+        if backslash_count % 2 == 1:
+            backslashes_start = open_index - backslash_count
+            rendered.append(text[index:backslashes_start])
+            rendered.append("\\" * (backslash_count // 2))
+            rendered.append("{{")
+            index = open_index + 2
+        else:
+            rendered.append(text[index : open_index + 2])
+            index = open_index + 2
+    return "".join(rendered)
+
+
+def _is_escaped_tag_open(template: str, open_index: int) -> bool:
+    return _count_preceding_backslashes(template, open_index) % 2 == 1
+
+
+def _unescape_literal_before_tag(text: str) -> str:
+    backslash_count = 0
+    index = len(text) - 1
+    while index >= 0 and text[index] == "\\":
+        backslash_count += 1
+        index -= 1
+    if backslash_count == 0:
+        return _unescape_template_literals(text)
+
+    prefix = text[: len(text) - backslash_count]
+    return _unescape_template_literals(prefix) + ("\\" * (backslash_count // 2))
 
 
 def _iter_tags(template: str):
@@ -102,7 +137,7 @@ def render_template(template: str, variables: dict[str, Any]) -> str:
     rendered: list[str] = []
     last_index = 0
     for start, end, raw_name in _iter_tags(template):
-        rendered.append(_unescape_template_literals(template[last_index:start]))
+        rendered.append(_unescape_literal_before_tag(template[last_index:start]))
         rendered.append(str(variables[raw_name.strip()]))
         last_index = end
     rendered.append(_unescape_template_literals(template[last_index:]))

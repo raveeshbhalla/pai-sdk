@@ -70,6 +70,9 @@ def test_render_template_escaped_mustache_literal():
     assert render_template(template, {"actual": "render"}) == (
         "Use {{name}} literally, then render."
     )
+    assert render_template(r"Use \\\{{name}} literally.", {}) == (
+        r"Use \{{name}} literally."
+    )
     assert render_template("Value: {{actual}}.", {"actual": r"\{{kept}}"}) == (
         r"Value: \{{kept}}."
     )
@@ -78,7 +81,7 @@ def test_render_template_escaped_mustache_literal():
 def test_render_template_backslash_before_placeholder():
     template = r"C:\\{{folder}}"
     assert extract_variables(template) == ["folder"]
-    assert render_template(template, {"folder": "Users"}) == r"C:\\Users"
+    assert render_template(template, {"folder": "Users"}) == "C:\\Users"
 
 
 # ---------------------------------------------------------------------------
