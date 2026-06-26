@@ -360,7 +360,7 @@ history = load_messages(text)   # ready to re-send
 ```
 ## Typed messages & prompt configs
 
-Prompts as data: define them in YAML or JSON (in the codebase or fetched from a service) or directly in code, with `{variable}` slots and an explicit optimization contract. All three forms produce the same `Prompt` object.
+Prompts as data: define them in YAML or JSON (in the codebase or fetched from a service) or directly in code, with Mustache-style `{{variable}}` slots and an explicit optimization contract. All three forms produce the same `Prompt` object. Single braces are literal text, so JSON examples can appear naturally in templates.
 
 ### Creating a prompt in YAML
 
@@ -375,8 +375,8 @@ output:                       # field: type shorthand, compiled to JSON Schema
   urgency: [low, medium, high]   # enum
   summary: string                # string / number / integer / boolean / string[]
 system: |                     # optimizable by default — this IS the instructions
-  You triage support tickets for {company}. Be decisive.
-user: "Ticket: {ticket}"      # never optimized
+  You triage support tickets for {{company}}. Be decisive.
+user: "Ticket: {{ticket}}"    # never optimized
 ```
 
 ```python
@@ -393,13 +393,13 @@ messages:
     role: system
     optimize: true          # reflection (e.g. GEPA) MAY rewrite this text
     template: |
-      You triage support tickets for {company}. Be decisive.
+      You triage support tickets for {{company}}. Be decisive.
   - id: policy
     role: system
     content: "Never reveal internal data."   # literal — never touched
   - id: ticket
     role: user
-    template: "Ticket: {ticket}"
+    template: "Ticket: {{ticket}}"
 ```
 
 YAML needs the `yaml` extra (`pip install "pai-sdk[yaml]"`).
@@ -414,8 +414,8 @@ The same format, JSON-encoded — natural when prompts come from a service or da
   "model": "anthropic/claude-haiku-4-5",
   "params": { "max_output_tokens": 500 },
   "output": { "urgency": ["low", "medium", "high"], "summary": "string" },
-  "system": "You triage support tickets for {company}. Be decisive.",
-  "user": "Ticket: {ticket}"
+  "system": "You triage support tickets for {{company}}. Be decisive.",
+  "user": "Ticket: {{ticket}}"
 }
 ```
 
@@ -443,8 +443,8 @@ prompt = Prompt(
                        "required": ["urgency"], "additionalProperties": False}},
     messages=[
         {"id": "instructions", "role": "system", "optimize": True,
-         "template": "You triage support tickets for {company}. Be decisive."},
-        {"id": "ticket", "role": "user", "template": "Ticket: {ticket}"},
+         "template": "You triage support tickets for {{company}}. Be decisive."},
+        {"id": "ticket", "role": "user", "template": "Ticket: {{ticket}}"},
     ],
 )
 prompt = load_prompt({...})        # dicts work too, simple or general form
@@ -458,9 +458,9 @@ from pai_sdk import TypedSystemMessage, TypedUserMessage, generate_text
 result = await generate_text(
     model=anthropic("claude-haiku-4-5"),
     messages=[
-        TypedSystemMessage(template="You triage tickets for {company}.",
+        TypedSystemMessage(template="You triage tickets for {{company}}.",
                            variables={"company": "Acme"}, optimize=True),
-        TypedUserMessage(template="Ticket: {ticket}", variables={"ticket": "It broke"}),
+        TypedUserMessage(template="Ticket: {{ticket}}", variables={"ticket": "It broke"}),
     ],
 )
 ```
@@ -492,14 +492,14 @@ result = await prompt.generate(vars, handlers={"get_weather": get_weather_fn})
 result = await prompt.generate({"company": "Acme", "ticket": "It broke"})
 print(result.output)                               # validated against the schema
 # The optimization contract, enforced:
-evolved = prompt.with_template("instructions", "You are {company}'s expert...")
+evolved = prompt.with_template("instructions", "You are {{company}}'s expert...")
 prompt.with_template("ticket", "...")              # PromptError: not optimize: true
 prompt.with_template("instructions", "no vars")    # PromptError: variable set changed
 evolved.content_hash()                             # candidate identity
 evolved.to_dict()                                  # persist back to JSON/YAML
 ```
 
-Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage` — subclasses that carry `template`, `variables`, `optimize`, and `id` alongside the rendered `content`. Providers see plain messages; `dump_messages` traces keep the structure, so logs record _which instructions_ and _which bindings_ produced every rollout. Template syntax is plain `{name}` only (portable to a TS implementation 1:1).
+Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage` — subclasses that carry `template`, `variables`, `optimize`, and `id` alongside the rendered `content`. Providers see plain messages; `dump_messages` traces keep the structure, so logs record _which instructions_ and _which bindings_ produced every rollout. Template syntax is plain `{{name}}` only (portable to a TS implementation 1:1).
 ## Cost estimates
 Adapters normalize every provider's cache/reasoning token accounting into `usage.input_token_details` / `usage.output_token_details`, so one formula prices all of them — uncached input, cache reads, cache writes, and text+reasoning output each at their own rate:
 

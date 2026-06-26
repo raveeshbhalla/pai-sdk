@@ -1,17 +1,51 @@
-"""Examples — pick a model, set the matching API key, and run.
+"""Examples — set one provider API key and run.
 
-    ANTHROPIC_API_KEY=... python examples/basic.py
+    OPENAI_API_KEY=... python examples/basic.py
+
+If present, ~/.config/structured-ai-sdk/.env.local is loaded without
+overriding existing environment variables.
 """
 
 import asyncio
+import os
+from pathlib import Path
 
 from pydantic import BaseModel
 
 from pai_sdk import generate_text, step_count_is, stream_text, tool
 from pai_sdk.providers import anthropic, google, openai, openrouter  # noqa: F401
 
-MODEL = anthropic("claude-opus-4-8")
-# MODEL = openai("gpt-5.4")                        # Responses API
+
+def _load_env_local() -> None:
+    env_file = Path("~/.config/structured-ai-sdk/.env.local").expanduser()
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
+def _default_model():
+    if os.environ.get("OPENAI_API_KEY"):
+        return openai("gpt-5.4-mini")              # Responses API
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return anthropic("claude-opus-4-8")
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        return google("gemini-2.5-flash")
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return openrouter("anthropic/claude-opus-4.6")
+    raise RuntimeError(
+        "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY/GOOGLE_API_KEY, "
+        "or OPENROUTER_API_KEY, or add one to ~/.config/structured-ai-sdk/.env.local."
+    )
+
+
+_load_env_local()
+MODEL = _default_model()
+# MODEL = openai("gpt-5.4-mini")                   # Responses API
 # MODEL = openai.chat("gpt-5.4")                   # Chat Completions
 # MODEL = google("gemini-2.5-flash")
 # MODEL = openrouter("anthropic/claude-opus-4.6")
@@ -59,17 +93,21 @@ async def tools():
 
 
 async def multimodal():
+    tiny_png = (
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAJ0lEQVR42u3NsQkAAAjAsP7/tF7hIASyp6lTCQQCgUAgEAgEgi/BAjLD/C5w/SM9AAAAAElFTkSuQmCC"
+    )
     result = await generate_text(
         model=MODEL,
         messages=[
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Describe this image in one sentence."},
                     {
-                        "type": "image",
-                        "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/640px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg",
+                        "type": "text",
+                        "text": "What is the dominant color of this square? Reply in one sentence.",
                     },
+                    {"type": "image", "image": tiny_png},
                 ],
             }
         ],

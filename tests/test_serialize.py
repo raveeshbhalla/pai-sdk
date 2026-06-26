@@ -18,6 +18,7 @@ from pai_sdk import (
     generate_text,
 )
 from pai_sdk.serialize import dump_messages, dump_messages_json, load_messages
+from pai_sdk.typed import render_template
 
 from conftest import FakeModel, text_step
 
@@ -96,14 +97,14 @@ class TypedSystemMessage(SystemModelMessage):
     @model_validator(mode="after")
     def _render(self) -> "TypedSystemMessage":
         if not self.content:
-            self.content = self.template.format(**self.variables)
+            self.content = render_template(self.template, self.variables)
         return self
 
 
 async def test_typed_system_message_flows_through_engine():
     model = FakeModel(steps=[text_step("ok")])
     msg = TypedSystemMessage(
-        template="You answer questions about {topic} for {audience}.",
+        template="You answer questions about {{topic}} for {{audience}}.",
         variables={"topic": "tax law", "audience": "engineers"},
     )
     await generate_text(model=model, messages=[msg, {"role": "user", "content": "hi"}])
@@ -115,12 +116,12 @@ async def test_typed_system_message_flows_through_engine():
 
 def test_typed_system_message_survives_trace_round_trip():
     msg = TypedSystemMessage(
-        template="You answer questions about {topic} for {audience}.",
+        template="You answer questions about {{topic}} for {{audience}}.",
         variables={"topic": "tax law", "audience": "engineers"},
     )
     dumped = dump_messages([msg])
     # structured fields are preserved in the trace, alongside rendered content
-    assert dumped[0]["template"] == "You answer questions about {topic} for {audience}."
+    assert dumped[0]["template"] == "You answer questions about {{topic}} for {{audience}}."
     assert dumped[0]["variables"] == {"topic": "tax law", "audience": "engineers"}
     assert dumped[0]["content"].startswith("You answer questions about tax law")
 

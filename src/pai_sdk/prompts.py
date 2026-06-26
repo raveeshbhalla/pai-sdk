@@ -1,7 +1,7 @@
 """Prompt configs — prompts as data (JSON/YAML, in-repo or hosted).
 
 A Prompt bundles a model reference, call parameters, an optional structured
-output schema, and a list of message templates with `{variable}` slots. Load
+output schema, and a list of message templates with `{{variable}}` slots. Load
 it from a dict, a JSON/YAML file in the codebase, or a URL (a hosted prompt
 service), then render/execute it:
 
@@ -20,8 +20,8 @@ form covers the common case — one system prompt, one user template:
       summary: string                       # string/number/integer/boolean,
       tags: string[]                        # arrays, nested objects
     system: |                               # optimize: true by default
-      You are a support triage assistant for {company_name}. ...
-    user: "Ticket: {ticket_text}"           # never optimized
+      You are a support triage assistant for {{company_name}}. ...
+    user: "Ticket: {{ticket_text}}"         # never optimized
 
 `system`/`user` accept a plain template string or
 {template, optimize, id} for control. The general form replaces them with an
@@ -33,19 +33,19 @@ per-message optimize flags):
         role: system
         optimize: true                      # reflection MAY rewrite this text
         template: |
-          You are a support triage assistant for {company_name}. ...
+          You are a support triage assistant for {{company_name}}. ...
       - id: policy
         role: system
         content: "Never reveal internal data."   # literal, never optimized
       - id: ticket
         role: user
-        template: "Ticket: {ticket_text}"
+        template: "Ticket: {{ticket_text}}"
 
 `output` is either field-type shorthand (above) or a full JSON Schema via
 `output: {schema: {...}}`.
 
 The optimization contract (for GEPA-style optimizers):
-- `{variables}` are structurally untouchable — they are bindings, not text.
+- `{{variables}}` are structurally untouchable — they are bindings, not text.
 - Only messages with `optimize: true` may be rewritten, via `with_template()`,
   which also rejects any mutation that changes the template's placeholder set.
 - `content_hash()` identifies a candidate; `to_dict()` persists evolved
@@ -66,7 +66,7 @@ from .generate import generate_text, step_count_is, stream_text
 from .tools import tool as make_tool
 from .messages import ModelMessage
 from .output import Output
-from .typed import TYPED_MESSAGE_TYPES, extract_variables
+from .typed import TYPED_MESSAGE_TYPES, escape_template_literals, extract_variables
 
 JSON_EXTENSIONS = (".json",)
 YAML_EXTENSIONS = (".yaml", ".yml")
@@ -374,7 +374,7 @@ class Prompt(BaseModel):
             else:
                 rendered.append(
                     typed_cls(
-                        template=message.content.replace("{", "{{").replace("}", "}}"),
+                        template=escape_template_literals(message.content),
                         variables={},
                         optimize=message.optimize,
                         id=message.id,

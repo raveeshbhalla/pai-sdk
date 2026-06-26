@@ -3,7 +3,7 @@
 The prompt config is pai-sdk's "prompts as data" format: a JSON-compatible
 document (authored as YAML, JSON, or a Python dict) that bundles a model
 reference, call parameters, an output schema, and message templates with
-`{variable}` slots. It is designed to be stored in a repo, served by a prompt
+`{{variable}}` slots. It is designed to be stored in a repo, served by a prompt
 service, and **mutated by reflective optimizers under an enforced contract**.
 
 The machine-readable schema ships in the package at
@@ -31,8 +31,8 @@ A config must yield at least one message (simple or general form).
 
 ```yaml
 system: |                  # optimize: true by DEFAULT — this IS the instructions
-  You triage support tickets for {company}. Be decisive.
-user: "Ticket: {ticket}"   # optimize: false — never rewritten
+  You triage support tickets for {{company}}. Be decisive.
+user: "Ticket: {{ticket}}" # optimize: false — never rewritten
 ```
 
 `system`/`user` accept a string template or `{template|content, optimize, id}`
@@ -46,13 +46,13 @@ messages:
     role: system           # system | user | assistant
     optimize: true         # an optimizer MAY rewrite this text
     template: |            # interpolated; placeholders are the contract
-      You triage support tickets for {company}.
+      You triage support tickets for {{company}}.
   - id: policy
     role: system
     content: "Never reveal internal data."   # literal — no interpolation, braces untouched
   - id: ticket
     role: user
-    template: "Ticket: {ticket}"
+    template: "Ticket: {{ticket}}"
 ```
 
 Each message has exactly one of `template` (interpolated) or `content`
@@ -61,12 +61,15 @@ must be unique.
 
 ## Template syntax
 
-Plain `{name}` placeholders only — names must be Python identifiers. Format
-specs (`{x:>10}`), conversions (`{x!r}`), positional (`{0}`, `{}`), and
-dotted/indexed access (`{a.b}`, `{a[0]}`) are rejected at load time. Escape
-literal braces as `{{` and `}}`. This restriction is deliberate: the same
-templates must render identically in non-Python runtimes (a TypeScript
-implementation is a small regex interpolator).
+Mustache-style `{{name}}` placeholders only — names must be Python
+identifiers. Optional whitespace is allowed inside the tag, e.g. `{{ name }}`.
+Format specs (`{{x:>10}}`), conversions (`{{x!r}}`), positional (`{{0}}`,
+`{{}}`), and dotted/indexed access (`{{a.b}}`, `{{a[0]}}`) are rejected at
+load time. Single braces are literal text, so JSON examples like
+`{"answer": "yes"}` can appear in templates without escaping. This
+restriction is deliberate: the same templates must render identically in
+non-Python runtimes (a TypeScript implementation is a small regex
+interpolator).
 
 Rendering requires every placeholder to be bound; extra variables are ignored.
 Values are stringified. (Known limitation: slots are text-only — there is no
