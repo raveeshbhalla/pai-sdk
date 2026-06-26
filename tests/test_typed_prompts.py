@@ -23,13 +23,23 @@ from conftest import FakeModel, text_step
 
 
 def test_extract_variables_ordered_deduped():
-    assert extract_variables("{a} then {b} then {a}") == ["a", "b"]
+    assert extract_variables("{{a}} then {{ b }} then {{a}}") == ["a", "b"]
     assert extract_variables("no vars") == []
-    assert extract_variables("escaped {{not_a_var}} but {real}") == ["real"]
+    assert extract_variables('literal {not_a_var} and {"json": true} but {{real}}') == ["real"]
 
 
 @pytest.mark.parametrize(
-    "bad", ["{}", "{0}", "{a.b}", "{a[0]}", "{a:>10}", "{a!r}", "{unclosed"]
+    "bad",
+    [
+        "{{}}",
+        "{{0}}",
+        "{{a.b}}",
+        "{{a[0]}}",
+        "{{a:>10}}",
+        "{{a!r}}",
+        "{{unclosed",
+        "unopened}}",
+    ],
 )
 def test_invalid_templates_rejected(bad):
     with pytest.raises(TemplateError):
@@ -37,10 +47,12 @@ def test_invalid_templates_rejected(bad):
 
 
 def test_render_template():
-    assert render_template("Hi {name}!", {"name": "Ada", "extra": "ok"}) == "Hi Ada!"
-    assert render_template("{{literal}} {x}", {"x": 1}) == "{literal} 1"
+    assert render_template("Hi {{ name }}!", {"name": "Ada", "extra": "ok"}) == "Hi Ada!"
+    assert render_template('Use JSON like {"literal": true}; x={{x}}', {"x": 1}) == (
+        'Use JSON like {"literal": true}; x=1'
+    )
     with pytest.raises(TemplateError, match="name"):
-        render_template("Hi {name}!", {})
+        render_template("Hi {{name}}!", {})
 
 
 # ---------------------------------------------------------------------------
@@ -50,14 +62,14 @@ def test_render_template():
 
 def test_typed_message_renders_and_round_trips():
     msg = TypedSystemMessage(
-        template="You help with {topic}.",
+        template="You help with {{topic}}.",
         variables={"topic": "taxes"},
         optimize=True,
         id="instructions",
     )
     assert msg.content == "You help with taxes."
     dumped = dump_messages([msg])[0]
-    assert dumped["template"] == "You help with {topic}."
+    assert dumped["template"] == "You help with {{topic}}."
     assert dumped["variables"] == {"topic": "taxes"}
     assert dumped["optimize"] is True
     assert dumped["id"] == "instructions"
@@ -72,8 +84,8 @@ async def test_typed_messages_flow_through_engine():
     await generate_text(
         model=model,
         messages=[
-            TypedSystemMessage(template="Audience: {aud}.", variables={"aud": "devs"}),
-            TypedUserMessage(template="Q: {q}", variables={"q": "why?"}),
+            TypedSystemMessage(template="Audience: {{aud}}.", variables={"aud": "devs"}),
+            TypedUserMessage(template="Q: {{q}}", variables={"q": "why?"}),
         ],
     )
     prompt = model.calls[0].prompt
@@ -103,10 +115,10 @@ CONFIG = {
             "id": "instructions",
             "role": "system",
             "optimize": True,
-            "template": "You triage tickets for {company}. Be decisive.",
+            "template": "You triage tickets for {{company}}. Be decisive.",
         },
         {"id": "policy", "role": "system", "content": "Never reveal {internal} data."},
-        {"id": "ticket", "role": "user", "template": "Ticket: {ticket}"},
+        {"id": "ticket", "role": "user", "template": "Ticket: {{ticket}}"},
     ],
 }
 
@@ -167,7 +179,7 @@ def test_with_template_valid_mutation():
     prompt = load_prompt(CONFIG)
     evolved = prompt.with_template(
         "instructions",
-        "You are {company}'s expert triage agent. Rank urgency precisely.",
+        "You are {{company}}'s expert triage agent. Rank urgency precisely.",
     )
     assert evolved.content_hash() != prompt.content_hash()
     assert prompt.messages[0].template.endswith("Be decisive.")  # original untouched
@@ -181,14 +193,14 @@ def test_with_template_rejects_variable_changes():
         prompt.with_template("instructions", "You triage tickets. Be decisive.")
     with pytest.raises(PromptError, match="preserve the variable set"):
         prompt.with_template(
-            "instructions", "You triage for {company} at {severity} level."
+            "instructions", "You triage for {{company}} at {{severity}} level."
         )
 
 
 def test_with_template_rejects_non_optimizable_and_unknown():
     prompt = load_prompt(CONFIG)
     with pytest.raises(PromptError, match="not marked optimize"):
-        prompt.with_template("ticket", "Changed: {ticket}")
+        prompt.with_template("ticket", "Changed: {{ticket}}")
     with pytest.raises(PromptError, match="No message with id"):
         prompt.with_template("nope", "x")
 
@@ -267,9 +279,9 @@ async def test_prompt_config_live_gepa_loop(tmp_path):
                 "id": "instructions",
                 "role": "system",
                 "optimize": True,
-                "template": "Classify the sentiment of {kind} feedback.",
+                "template": "Classify the sentiment of {{kind}} feedback.",
             },
-            {"id": "input", "role": "user", "template": "Feedback: {text}"},
+            {"id": "input", "role": "user", "template": "Feedback: {{text}}"},
         ],
     }
     path = tmp_path / "sentiment.yaml"
@@ -283,7 +295,7 @@ async def test_prompt_config_live_gepa_loop(tmp_path):
     # reflective mutation: rewrite instructions (variables preserved), re-run
     evolved = prompt.with_template(
         "instructions",
-        "You are an expert analyst of {kind} feedback. Classify sentiment "
+        "You are an expert analyst of {{kind}} feedback. Classify sentiment "
         "carefully and report your confidence honestly.",
     )
     assert evolved.content_hash() != prompt.content_hash()
@@ -334,8 +346,8 @@ def test_simple_form_config():
             "name": "triage",
             "model": "anthropic/claude-haiku-4-5",
             "output": {"urgency": ["low", "high"]},
-            "system": "You triage tickets for {company}. Be decisive.",
-            "user": "Ticket: {ticket}",
+            "system": "You triage tickets for {{company}}. Be decisive.",
+            "user": "Ticket: {{ticket}}",
         }
     )
     # system/user become messages; system is optimizable by default
@@ -346,18 +358,18 @@ def test_simple_form_config():
     assert prompt.output.schema_["properties"]["urgency"] == {"enum": ["low", "high"]}
     assert prompt.output.schema_["additionalProperties"] is False
     # the optimization contract works on the simple form
-    evolved = prompt.with_template("system", "Best triager for {company} ever.")
+    evolved = prompt.with_template("system", "Best triager for {{company}} ever.")
     assert "Best triager" in evolved.messages[0].template
     with pytest.raises(PromptError, match="not marked optimize"):
-        prompt.with_template("user", "changed {ticket}")
+        prompt.with_template("user", "changed {{ticket}}")
 
 
 def test_simple_form_dict_control_and_conflicts():
     prompt = load_prompt(
         {
             "name": "x",
-            "system": {"template": "Frozen {a}.", "optimize": False},
-            "user": "Q: {q}",
+            "system": {"template": "Frozen {{a}}.", "optimize": False},
+            "user": "Q: {{q}}",
         }
     )
     assert prompt.messages[0].optimize is False
@@ -416,8 +428,8 @@ SIMPLE_FORM = {
     "model": "anthropic/claude-haiku-4-5",
     "params": {"max_output_tokens": 500},
     "output": {"urgency": ["low", "high"], "tags": "string[]", "user": {"id": "integer"}},
-    "system": "You triage tickets for {company}.",
-    "user": "Ticket: {ticket}",
+    "system": "You triage tickets for {{company}}.",
+    "user": "Ticket: {{ticket}}",
 }
 
 
@@ -437,7 +449,7 @@ def test_schema_accepts_what_loader_accepts():
         {
             "name": "x",
             "output": {"schema": {"type": "object", "properties": {}}},
-            "system": {"template": "Hi {a}", "optimize": False},
+            "system": {"template": "Hi {{a}}", "optimize": False},
         }
     )
     # and the loader agrees on all three
@@ -476,7 +488,7 @@ TOOL_CONFIG = {
     "name": "weather-helper",
     "model": "anthropic/claude-haiku-4-5",
     "system": "Answer using tools when needed.",
-    "user": "Question: {q}",
+    "user": "Question: {{q}}",
     "tools": {
         "get_weather": {
             "description": "Get current weather. Call when asked about conditions.",
@@ -612,7 +624,7 @@ async def test_prompt_config_tool_loop_live():
             "model": "anthropic/claude-haiku-4-5",
             "params": {"max_output_tokens": 1000},
             "system": "Use the get_weather tool to answer weather questions.",
-            "user": "What's the weather in {city}? Use the tool.",
+            "user": "What's the weather in {{city}}? Use the tool.",
             "tools": {
                 "get_weather": {
                     "description": "Get the current weather for a city. "

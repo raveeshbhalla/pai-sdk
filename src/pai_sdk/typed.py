@@ -1,7 +1,7 @@
 """Typed messages — templates + variable bindings as first-class message fields.
 
 A TypedSystemMessage/TypedUserMessage/TypedAssistantMessage carries:
-- `template`: text with `{variable}` placeholders ("{{"/"}}" escape literals)
+- `template`: text with Mustache-style `{{variable}}` placeholders
 - `variables`: the bindings used to render it
 - `optimize`: whether an optimizer (e.g. GEPA-style reflection) may rewrite
   the template text. Variables are structurally untouchable: placeholders are
@@ -13,14 +13,15 @@ role/content, so these flow through generate_text unchanged; serialization
 (dump_messages) keeps template/variables/optimize alongside the rendered
 content, so traces stay structured and re-renderable.
 
-Template syntax is deliberately minimal — plain `{name}` only (no format
+Template syntax is deliberately minimal — plain `{{name}}` only (no format
 specs, no attribute/index access) — so the same templates render identically
-in a TypeScript implementation.
+in a TypeScript implementation. Single braces are ordinary text, which keeps
+JSON examples and other brace-heavy prompt text natural to write.
 """
 
 from __future__ import annotations
 
-from string import Formatter
+import re
 from typing import Any, Optional
 
 from pydantic import Field, model_validator
@@ -33,30 +34,42 @@ class TemplateError(AISDKError):
     """Invalid template syntax or missing/invalid variables."""
 
 
+_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_TAG_RE = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
+
+
 def extract_variables(template: str) -> list[str]:
     """Placeholder names in a template, in order of first appearance.
 
-    Only plain `{name}` placeholders are allowed; format specs ({x:>10}),
-    conversions ({x!r}), positional ({0}, {}) and dotted/indexed access
-    ({a.b}, {a[0]}) raise TemplateError — keeping templates portable across
-    runtimes.
+    Only plain `{{name}}` placeholders are allowed; format specs
+    (`{{x:>10}}`), conversions (`{{x!r}}`), positional (`{{0}}`, `{{}}`)
+    and dotted/indexed access (`{{a.b}}`, `{{a[0]}}`) raise TemplateError —
+    keeping templates portable across runtimes.
     """
     names: list[str] = []
-    try:
-        parsed = list(Formatter().parse(template))
-    except ValueError as exc:
-        raise TemplateError(f"Invalid template: {exc}") from exc
-    for _literal, name, spec, conversion in parsed:
-        if name is None:
-            continue
-        if name == "" or not name.isidentifier() or spec or conversion:
+    index = 0
+    while True:
+        open_index = template.find("{{", index)
+        close_index = template.find("}}", index)
+        if close_index != -1 and (open_index == -1 or close_index < open_index):
+            raise TemplateError("Invalid template: unexpected '}}'.")
+        if open_index == -1:
+            break
+
+        close_index = template.find("}}", open_index + 2)
+        if close_index == -1:
+            raise TemplateError("Invalid template: unclosed '{{'.")
+
+        raw_name = template[open_index + 2 : close_index]
+        name = raw_name.strip()
+        if not _NAME_RE.match(name):
             raise TemplateError(
-                "Only plain {name} placeholders are supported; "
-                f"got '{{{name}{'!' + conversion if conversion else ''}"
-                f"{':' + spec if spec else ''}}}'."
+                "Only plain {{name}} placeholders are supported; "
+                f"got '{{{{{raw_name}}}}}'."
             )
         if name not in names:
             names.append(name)
+        index = close_index + 2
     return names
 
 
@@ -68,7 +81,11 @@ def render_template(template: str, variables: dict[str, Any]) -> str:
         raise TemplateError(
             f"Missing template variables: {', '.join(missing)}."
         )
-    return template.format(**{name: variables[name] for name in names})
+
+    def replace(match: re.Match[str]) -> str:
+        return str(variables[match.group(1).strip()])
+
+    return _TAG_RE.sub(replace, template)
 
 
 class _TypedMixin:
