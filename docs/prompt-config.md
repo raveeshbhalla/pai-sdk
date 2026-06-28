@@ -2,7 +2,7 @@
 
 The prompt config is pai-sdk's "prompts as data" format: a JSON-compatible
 document (authored as YAML, JSON, or a Python dict) that bundles a model
-reference, call parameters, an output schema, and message templates with
+reference, call parameters, optional input/output schemas, and message templates with
 `{{variable}}` slots. It is designed to be stored in a repo, served by a prompt
 service, and safely rewritten by external optimizer runners under an enforced
 contract.
@@ -22,6 +22,7 @@ editor support.
 | `description` | string | no | |
 | `model` | string | no | `provider/model-id` (e.g. `anthropic/claude-haiku-4-5`). Omit to supply `model=` at call time. |
 | `params` | object | no | `generate_text` kwargs applied on every call; per-call overrides win. |
+| `input` | object | no | Structured input signature — shorthand or full JSON Schema (below). |
 | `output` | object | no | Structured output — shorthand or full JSON Schema (below). |
 | `system` / `user` | string \| object | no | Simple form (below). Mutually exclusive with `messages`. |
 | `messages` | array | no | General form (below). |
@@ -75,12 +76,18 @@ Rendering requires every placeholder to be bound; extra variables are ignored.
 Values are stringified. (Known limitation: slots are text-only — there is no
 message-level slot for splicing structured content yet.)
 
-## Output schemas
+## Input and output schemas
 
-Two forms. **Shorthand** (no `schema` key) — field-type mapping compiled to a
-strict JSON Schema (all fields required, `additionalProperties: false`):
+`input` and `output` support the same two forms. **Shorthand** (no `schema`
+key) is a field-type mapping compiled to a strict JSON Schema (all fields
+required, `additionalProperties: false`):
 
 ```yaml
+input:
+  company: string
+  ticket: string
+  customer_context: string
+
 output:
   urgency: [low, medium, high]   # list of literals -> enum
   summary: string                # string | number | integer | boolean
@@ -93,11 +100,28 @@ output:
 **Full JSON Schema** (escape hatch — presence of `schema` selects it):
 
 ```yaml
+input:
+  schema:
+    type: object
+    properties:
+      company: {type: string}
+      ticket: {type: string}
+      customer_context: {type: string}
+    required: [company, ticket]   # customer_context is optional
+    additionalProperties: false
 output:
   schema: { type: object, properties: {...}, required: [...], additionalProperties: false }
   name: triage          # optional
   description: ...      # optional
 ```
+
+When `input` is present, every template variable must be declared as a
+top-level input property. `Prompt.render()` enforces missing required fields and
+`additionalProperties: false` at the top level. It intentionally does not do
+full JSON Schema type validation; callers can run their validator of choice
+before invoking the prompt. Optional fields are useful for trace/eval metadata
+or future hydrators, but a `{{placeholder}}` still requires a value when the
+template is rendered.
 
 When `output` is present, `prompt.generate()` requests provider-strict
 structured output and returns the validated object on `result.output`.
@@ -167,6 +191,7 @@ prompt = await load_prompt_url(url)             # hosted service (format inferre
 prompt = Prompt(name=..., messages=[...])       # plain Pydantic constructor
 
 prompt.variables             # ordered template variable names (the signature)
+prompt.input_schema()        # declared structured input signature, if present
 messages = prompt.render({"company": "Acme", "ticket": "..."})  # typed messages
 result = await prompt.generate({...}, model=optional_override, **overrides)
 stream = prompt.stream({...})

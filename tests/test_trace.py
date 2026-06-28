@@ -27,6 +27,7 @@ def _triage_prompt():
     return load_prompt(
         {
             "name": "trace-triage",
+            "input": {"company": "string", "ticket": "string"},
             "messages": [
                 {
                     "id": "system",
@@ -66,6 +67,13 @@ async def test_prompt_generate_trace_builds_structured_span():
     assert span.usage.total_tokens == 15
     assert [message.role for message in span.messages] == ["system", "user", "assistant"]
     assert span.metadata["prompt"]["name"] == "trace-triage"
+    assert span.metadata["prompt"]["input"]["schema"]["required"] == [
+        "company",
+        "ticket",
+    ]
+    assert span.metadata["prompt"]["output"]["schema"]["properties"]["urgency"] == {
+        "enum": ["low", "high"]
+    }
     assert span.metadata["prompt"]["message_ids"] == ["system", "ticket"]
 
     dumped = span.to_dict()["messages"]

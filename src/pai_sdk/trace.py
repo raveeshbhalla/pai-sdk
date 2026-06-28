@@ -510,12 +510,24 @@ async def replay_trace(
 
 
 def _prompt_metadata(prompt: Any) -> dict[str, Any]:
+    input_schema = (
+        prompt.input.model_dump(by_alias=True, exclude_none=True)
+        if prompt.input
+        else None
+    )
+    output_schema = (
+        prompt.output.model_dump(by_alias=True, exclude_none=True)
+        if prompt.output
+        else None
+    )
     return {
         "prompt": {
             "name": prompt.name,
             "version": prompt.version,
             "content_hash": prompt.content_hash(),
             "variables": prompt.variables,
+            "input": input_schema,
+            "output": output_schema,
             "message_ids": [message.id for message in prompt.messages],
             "tool_names": list(prompt.tools),
         }

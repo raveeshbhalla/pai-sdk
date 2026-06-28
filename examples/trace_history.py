@@ -71,6 +71,7 @@ async def main() -> None:
     prompt = load_prompt(
         {
             "name": "support-triage",
+            "input": {"company": "string", "ticket": "string"},
             "messages": [
                 {
                     "id": "system",

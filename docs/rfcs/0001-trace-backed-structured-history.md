@@ -56,7 +56,7 @@ pai-sdk already owns the pieces closest to the target shape:
 - `generate_text` and `stream_text`
 - tool loop execution
 - structured output parsing
-- prompt configs with templates, variables, tools, and output schemas
+- prompt configs with templates, variables, tools, and input/output schemas
 - `dump_messages` and `load_messages` for replayable message serialization
 
 DSPy remains relevant as an optional interop or optimizer bridge, but it should
@@ -169,7 +169,7 @@ available at import time.
 Prompt configs are already close to a lightweight signature:
 
 - `Prompt` bundles model metadata, call params, messages, tools, and optional
-  output schema.
+  input/output schemas.
 - `template` messages use `{{variable}}` placeholders.
 - `Prompt.variables` is inferred from placeholders across message templates.
 - `output` declares the structured response shape as shorthand or JSON Schema.
@@ -185,6 +185,11 @@ Example:
 
 ```yaml
 name: content-review-judge
+input:
+  original_question: string
+  transcript: string
+  draft_title: string
+  draft_summary: string
 messages:
   - id: system
     role: system
@@ -449,7 +454,6 @@ DSPy gap for this RFC:
 pai-sdk gap:
 
 - needs official `Trace` / `Span` and adapter-result semantics
-- needs clearer input schema support
 - needs first-class helpers for trace creation and replay
 
 The bakeoff suggests that adding structured-history helpers to pai-sdk is more
@@ -461,6 +465,8 @@ provider-near message traces.
 The initial implementation adds:
 
 - `Trace` and `Span`
+- top-level prompt `input` schemas using the same shorthand/full-JSON-Schema
+  forms as `output`
 - `Prompt.generate_trace(...)` and `Prompt.stream_trace(...)`
 - `generate_trace(...)` and `stream_trace(...)` helpers for plain prompt/message
   calls outside prompt configs
@@ -531,8 +537,6 @@ messages, but the trace span still stores the rendered messages.
 
 ## Open Questions
 
-- Should prompt configs add `input` schema now, or should v1 rely on
-  `Prompt.variables`?
 - How should `prepare_step` message overrides be represented in the final
   canonical message history?
 - Should child spans be emitted for each tool step, or is the flat

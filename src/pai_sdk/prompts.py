@@ -1,9 +1,9 @@
 """Prompt configs — prompts as data (JSON/YAML, in-repo or hosted).
 
-A Prompt bundles a model reference, call parameters, an optional structured
-output schema, and a list of message templates with `{{variable}}` slots. Load
-it from a dict, a JSON/YAML file in the codebase, or a URL (a hosted prompt
-service), then render/execute it:
+A Prompt bundles a model reference, call parameters, optional structured input
+and output schemas, and a list of message templates with `{{variable}}` slots.
+Load it from a dict, a JSON/YAML file in the codebase, or a URL (a hosted
+prompt service), then render/execute it:
 
     prompt = load_prompt("prompts/triage.yaml")
     result = await prompt.generate({"ticket_text": "...", "company_name": "Acme"})
@@ -15,6 +15,9 @@ form covers the common case — one system prompt, one user template:
     model: anthropic/claude-haiku-4-5       # optional provider/model string
     params:                                 # optional generate_text kwargs
       max_output_tokens: 1000
+    input:                                  # optional structured input signature
+      company_name: string
+      ticket_text: string
     output:                                 # optional structured output —
       urgency: [low, medium, high]          # field: type shorthand (enum)
       summary: string                       # string/number/integer/boolean,
@@ -40,8 +43,8 @@ stable ids for optimizer-selected targets):
         role: user
         template: "Ticket: {{ticket_text}}"
 
-`output` is either field-type shorthand (above) or a full JSON Schema via
-`output: {schema: {...}}`.
+`input` and `output` are either field-type shorthand (above) or full JSON
+Schemas via `{schema: {...}}`.
 
 The optimization contract (for external optimizer runners):
 - `{{variables}}` are structurally untouchable — they are bindings, not text.
@@ -119,7 +122,7 @@ _SHORTHAND_TYPES = {
 }
 
 
-def compile_output_shorthand(fields: dict[str, Any]) -> dict[str, Any]:
+def _compile_schema_shorthand(fields: dict[str, Any], *, label: str) -> dict[str, Any]:
     """Compile field-type shorthand into a strict JSON Schema object.
 
     Field values: "string" | "number" | "integer" | "boolean" (or None for
@@ -136,15 +139,15 @@ def compile_output_shorthand(fields: dict[str, Any]) -> dict[str, Any]:
             if value in _SHORTHAND_TYPES:
                 return dict(_SHORTHAND_TYPES[value])
             raise PromptError(
-                f"Unknown output field type '{value}' (expected one of "
+                f"Unknown {label} field type '{value}' (expected one of "
                 f"{', '.join(_SHORTHAND_TYPES)}, '<type>[]', a list of enum "
                 "values, or a nested mapping)."
             )
         if isinstance(value, list):
             return {"enum": value}
         if isinstance(value, dict):
-            return compile_output_shorthand(value)
-        raise PromptError(f"Unknown output field type: {value!r}")
+            return _compile_schema_shorthand(value, label=label)
+        raise PromptError(f"Unknown {label} field type: {value!r}")
 
     return {
         "type": "object",
@@ -152,6 +155,32 @@ def compile_output_shorthand(fields: dict[str, Any]) -> dict[str, Any]:
         "required": list(fields.keys()),
         "additionalProperties": False,
     }
+
+
+def compile_schema_shorthand(fields: dict[str, Any]) -> dict[str, Any]:
+    """Compile field-type shorthand into a strict JSON Schema object."""
+
+    return _compile_schema_shorthand(fields, label="schema")
+
+
+def compile_input_shorthand(fields: dict[str, Any]) -> dict[str, Any]:
+    """Compile prompt input shorthand into a strict JSON Schema object."""
+
+    return _compile_schema_shorthand(fields, label="input")
+
+
+def compile_output_shorthand(fields: dict[str, Any]) -> dict[str, Any]:
+    """Compile prompt output shorthand into a strict JSON Schema object."""
+
+    return _compile_schema_shorthand(fields, label="output")
+
+
+class PromptInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_: dict[str, Any] = Field(alias="schema")
+    name: Optional[str] = None
+    description: Optional[str] = None
 
 
 class PromptOutput(BaseModel):
@@ -192,7 +221,7 @@ class PromptTool(BaseModel):
             return None
         if "schema" in self.input:
             return self.input["schema"]
-        return compile_output_shorthand(self.input)
+        return compile_input_shorthand(self.input)
 
 
 ToolChoiceConfig = Union[Literal["auto", "none", "required"], dict[str, Any]]
@@ -206,6 +235,7 @@ class Prompt(BaseModel):
     description: Optional[str] = None
     model: Optional[str] = None  # "provider/model-id" string
     params: dict[str, Any] = Field(default_factory=dict)
+    input: Optional[PromptInput] = None
     output: Optional[PromptOutput] = None
     tools: dict[str, PromptTool] = Field(default_factory=dict)
     tool_choice: Optional[ToolChoiceConfig] = None
@@ -219,7 +249,11 @@ class Prompt(BaseModel):
             return data
         data = dict(data)
 
-        # output: field-type shorthand -> full JSON Schema
+        # input:/output: field-type shorthand -> full JSON Schema
+        input_config = data.get("input")
+        if isinstance(input_config, dict) and "schema" not in input_config:
+            data["input"] = {"schema": compile_input_shorthand(input_config)}
+
         output = data.get("output")
         if isinstance(output, dict) and "schema" not in output:
             data["output"] = {"schema": compile_output_shorthand(output)}
@@ -257,7 +291,26 @@ class Prompt(BaseModel):
         ids = [m.id for m in self.messages if m.id is not None]
         if len(ids) != len(set(ids)):
             raise ValueError("Prompt message ids must be unique.")
+        self._validate_input_schema()
         return self
+
+    def _validate_input_schema(self) -> None:
+        if self.input is None:
+            return
+        schema = self.input.schema_
+        if schema.get("type") not in (None, "object"):
+            raise ValueError("Prompt input schema must be an object schema.")
+        properties = schema.get("properties")
+        if properties is None:
+            return
+        if not isinstance(properties, dict):
+            raise ValueError("Prompt input schema properties must be an object.")
+        missing = [name for name in self.variables if name not in properties]
+        if missing:
+            raise ValueError(
+                "Prompt input schema must declare template variables: "
+                f"{', '.join(missing)}."
+            )
 
     # -- introspection -------------------------------------------------------
 
@@ -286,6 +339,41 @@ class Prompt(BaseModel):
 
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, exclude_none=True)
+
+    def input_schema(self) -> Optional[dict[str, Any]]:
+        """Return the declared structured input schema, if any."""
+
+        return self.input.schema_ if self.input is not None else None
+
+    def validate_inputs(self, variables: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Lightweight top-level validation for prompt input variables.
+
+        This intentionally does not implement full JSON Schema validation.
+        It enforces the parts pai-sdk relies on for stable call signatures:
+        required top-level fields and `additionalProperties: false`.
+        """
+
+        data = dict(variables or {})
+        if self.input is None:
+            return data
+        schema = self.input.schema_
+        properties = schema.get("properties")
+        property_names = set(properties) if isinstance(properties, dict) else None
+        required = schema.get("required") or []
+        missing_required = [name for name in required if name not in data]
+        if missing_required:
+            raise PromptError(
+                f"Prompt '{self.name}' is missing required input fields: "
+                f"{', '.join(missing_required)}."
+            )
+        if schema.get("additionalProperties") is False and property_names is not None:
+            extra = sorted(set(data) - property_names)
+            if extra:
+                raise PromptError(
+                    f"Prompt '{self.name}' received unknown input fields: "
+                    f"{', '.join(extra)}."
+                )
+        return data
 
     # -- the optimization contract -------------------------------------------
 
@@ -351,6 +439,7 @@ class Prompt(BaseModel):
             raise PromptError(
                 f"Prompt '{self.name}' is missing variables: {', '.join(missing)}."
             )
+        variables = self.validate_inputs(variables)
         rendered: list[ModelMessage] = []
         for message in self.messages:
             typed_cls = TYPED_MESSAGE_TYPES[message.role]

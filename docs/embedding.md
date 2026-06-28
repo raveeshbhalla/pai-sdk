@@ -7,7 +7,7 @@ store; it provides the primitives those systems are built from.
 
 ## The generic executor pattern
 
-Because a prompt config carries its messages, output schema, model, and
+Because a prompt config carries its messages, input/output schemas, model, and
 params, a runner that executes "any prompt against any row" needs no
 prompt-specific code:
 

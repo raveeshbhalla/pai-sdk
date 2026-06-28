@@ -400,6 +400,9 @@ params:
 output:                       # field: type shorthand, compiled to JSON Schema
   urgency: [low, medium, high]   # enum
   summary: string                # string / number / integer / boolean / string[]
+input:                        # optional structured input signature
+  company: string
+  ticket: string
 system: |
   You triage support tickets for {{company}}. Be decisive.
 user: "Ticket: {{ticket}}"
@@ -411,7 +414,7 @@ from pai_sdk import load_prompt
 prompt = load_prompt("prompts/triage.yaml")
 ```
 
-That's the simple form. The general form is an explicit `messages:` list — use it for multiple system blocks (e.g. frozen policy text next to mutable instructions), few-shot assistant turns, or stable message ids that optimizer scripts can target at run time — and `output: {schema: {...}}` accepts full JSON Schema:
+That's the simple form. The general form is an explicit `messages:` list — use it for multiple system blocks (e.g. frozen policy text next to mutable instructions), few-shot assistant turns, or stable message ids that optimizer scripts can target at run time — and `input: {schema: {...}}` / `output: {schema: {...}}` accept full JSON Schema:
 
 ```yaml
 messages:

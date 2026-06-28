@@ -377,7 +377,7 @@ async def test_prompt_config_live_optimizer_loop(tmp_path):
 # Simple-form configs (top-level system/user, output type shorthand)
 # ---------------------------------------------------------------------------
 
-from pai_sdk.prompts import compile_output_shorthand  # noqa: E402
+from pai_sdk.prompts import compile_input_shorthand, compile_output_shorthand  # noqa: E402
 
 
 def test_output_shorthand_compiles():
@@ -404,6 +404,92 @@ def test_output_shorthand_compiles():
     assert schema["additionalProperties"] is False
     with pytest.raises(PromptError, match="Unknown output field type"):
         compile_output_shorthand({"x": "strang"})
+
+
+def test_input_shorthand_compiles_and_validates_prompt_inputs():
+    schema = compile_input_shorthand(
+        {
+            "company": "string",
+            "ticket": "string",
+            "tenant_id": "string",
+            "context": {"plan": "string"},
+        }
+    )
+    assert schema["required"] == ["company", "ticket", "tenant_id", "context"]
+    assert schema["properties"]["context"]["properties"]["plan"] == {"type": "string"}
+
+    prompt = load_prompt(
+        {
+            "name": "input-signature",
+            "input": {
+                "company": "string",
+                "ticket": "string",
+                "tenant_id": "string",
+            },
+            "system": "You support {{company}}.",
+            "user": "Ticket: {{ticket}}",
+        }
+    )
+
+    assert prompt.input_schema()["required"] == ["company", "ticket", "tenant_id"]
+    prompt.render({"company": "Acme", "ticket": "Login", "tenant_id": "t_1"})
+    with pytest.raises(PromptError, match="tenant_id"):
+        prompt.render({"company": "Acme", "ticket": "Login"})
+    with pytest.raises(PromptError, match="unknown input fields"):
+        prompt.render(
+            {
+                "company": "Acme",
+                "ticket": "Login",
+                "tenant_id": "t_1",
+                "unused": "extra",
+            }
+        )
+
+
+def test_full_input_schema_supports_optional_fields():
+    prompt = load_prompt(
+        {
+            "name": "optional-inputs",
+            "input": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "company": {"type": "string"},
+                        "ticket": {"type": "string"},
+                        "customer_context": {"type": "string"},
+                    },
+                    "required": ["company", "ticket"],
+                    "additionalProperties": False,
+                },
+                "description": "Input row for support triage.",
+            },
+            "system": "You support {{company}}.",
+            "user": "Ticket: {{ticket}}",
+        }
+    )
+
+    prompt.render({"company": "Acme", "ticket": "Login"})
+    prompt.render(
+        {
+            "company": "Acme",
+            "ticket": "Login",
+            "customer_context": "Enterprise customer.",
+        }
+    )
+    with pytest.raises(PromptError, match="unknown input fields"):
+        prompt.render({"company": "Acme", "ticket": "Login", "unknown": "x"})
+
+
+def test_input_schema_must_declare_template_variables():
+    with pytest.raises(Exception, match="declare template variables: company"):
+        load_prompt(
+            {
+                "name": "bad-input-signature",
+                "input": {"ticket": "string"},
+                "system": "You support {{company}}.",
+                "user": "Ticket: {{ticket}}",
+            }
+        )
 
 
 def test_simple_form_config():
@@ -493,6 +579,7 @@ SIMPLE_FORM = {
     "name": "triage",
     "model": "anthropic/claude-haiku-4-5",
     "params": {"max_output_tokens": 500},
+    "input": {"company": "string", "ticket": "string"},
     "output": {"urgency": ["low", "high"], "tags": "string[]", "user": {"id": "integer"}},
     "system": "You triage tickets for {{company}}.",
     "user": "Ticket: {{ticket}}",
@@ -514,6 +601,14 @@ def test_schema_accepts_what_loader_accepts():
     assert _validates(
         {
             "name": "x",
+            "input": {
+                "schema": {
+                    "type": "object",
+                    "properties": {"a": {"type": "string"}, "optional": {"type": "string"}},
+                    "required": ["a"],
+                    "additionalProperties": False,
+                }
+            },
             "output": {"schema": {"type": "object", "properties": {}}},
             "system": {"template": "Hi {{a}}", "optimize": False},
         }
@@ -531,6 +626,7 @@ def test_schema_rejects_what_loader_rejects():
             {"role": "user", "template": "a", "content": "b"}  # both bodies
         ]},
         {"name": "x", "output": {"urgency": "strang"}, "system": "s"},  # bad type
+        {"name": "x", "input": {"query": "strang"}, "system": "{{query}}"},  # bad input type
         {"messages": [{"role": "user", "content": "hi"}]},  # missing name
     ]
     for config in bad_configs:
@@ -580,7 +676,7 @@ def test_prompt_tool_parsing_and_schemas():
     docs = prompt.tools["search_docs"]
     assert docs.input_schema()["properties"]["query"] == {"type": "string"}  # full-schema form
     assert [*prompt.optimizable_tools()] == ["get_weather"]
-    with pytest.raises(Exception, match="Unknown output field type"):
+    with pytest.raises(Exception, match="Unknown input field type"):
         load_prompt({**TOOL_CONFIG, "tools": {"x": {"input": {"a": "strang"}}}})
 
 
