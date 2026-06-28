@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from pai_sdk import (
+    TRACE_SCHEMA_VERSION,
+    TRACE_WIRE_SCHEMA,
     dump_messages,
+    dump_trace,
     dump_trace_json,
     generate_trace,
     LanguageModel,
@@ -10,6 +13,8 @@ from pai_sdk import (
     load_trace,
     PrepareStepResult,
     ProviderResult,
+    redact_trace,
+    redact_trace_content,
     replay_span,
     Span,
     span_input_messages,
@@ -177,6 +182,10 @@ async def test_trace_dump_load_round_trips_usage_and_message_boundary():
     assert loaded.id == traced.trace.id
     assert span.usage.total_tokens == 15
     assert span.metadata["input_message_count"] == 2
+    assert loaded.schema_version == TRACE_SCHEMA_VERSION
+    assert dump_trace(loaded)["schemaVersion"] == TRACE_SCHEMA_VERSION
+    jsonschema = __import__("jsonschema")
+    jsonschema.validate(dump_trace(loaded), TRACE_WIRE_SCHEMA)
     assert [message.role for message in span_input_messages(span)] == ["system", "user"]
     assert [message.role for message in span_response_messages(span)] == ["assistant"]
 
@@ -354,3 +363,35 @@ async def test_prompt_stream_trace_captures_prompt_metadata():
     [span] = trace.spans
     assert span.outputs["object"] == {"urgency": "high"}
     assert span.metadata["prompt"]["name"] == "trace-triage"
+
+
+def test_trace_redaction_hooks_do_not_mutate_trace():
+    trace = Trace(
+        id="trace_redact",
+        spans=[
+            Span(
+                id="trace_redact",
+                root_span_id="trace_redact",
+                inputs={"ticket": "secret input"},
+                outputs={"text": "secret output"},
+                messages=load_messages(
+                    [
+                        {"role": "user", "content": "secret input"},
+                        {"role": "assistant", "content": "secret output"},
+                    ]
+                ),
+                metadata={"input_message_count": 1},
+            )
+        ],
+    )
+
+    redacted = redact_trace_content(trace)
+    assert redacted["spans"][0]["inputs"] == {"redacted": True}
+    assert redacted["spans"][0]["messages"][0]["content"] == "[redacted]"
+    assert trace.spans[0].messages[0].content == "secret input"
+
+    custom = redact_trace(
+        trace,
+        lambda path, value: "HASH" if path[-1:] == ("ticket",) else value,
+    )
+    assert custom["spans"][0]["inputs"]["ticket"] == "HASH"

@@ -3,9 +3,11 @@ from __future__ import annotations
 from pai_sdk import (
     AssistantModelMessage,
     ToolModelMessage,
-    braintrust_messages_to_model_messages,
     span_input_messages,
     span_response_messages,
+)
+from pai_sdk.integrations.braintrust import (
+    braintrust_messages_to_model_messages,
     trace_from_braintrust_rows,
 )
 

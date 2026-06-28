@@ -201,9 +201,11 @@ traced_stream = prompt.stream_trace({...}, model=optional_override)
 
 `render()` produces `TypedSystemMessage` / `TypedUserMessage` /
 `TypedAssistantMessage` — message subclasses carrying `template`, `variables`,
-`optimize`, and `id` alongside the rendered `content`. Providers only read the
-rendered content; `dump_messages` traces preserve the structure, so logs record
-which instructions and which bindings produced every call.
+and `id` alongside the rendered `content`. Providers only read the rendered
+content; `dump_messages` traces preserve the structure, so logs record which
+instructions and which bindings produced every call. New optimizer runs should
+choose target ids in the optimizer script rather than encoding optimization
+intent in the prompt config.
 
 ## Trace-backed generation
 
@@ -281,8 +283,26 @@ The same pattern works for a subsection of a prompt, a user-message template,
 or a tool description. Prompt YAML does not need `optimize: true`; optimizer
 scripts decide which stable ids to target for each run.
 
-## Braintrust trace import
+## Trace integrations
 
+pai-sdk's core trace format is `pai.trace.v1`. `dump_trace(...)` and
+`dump_trace_json(...)` include `schemaVersion`, and `TRACE_WIRE_SCHEMA` exposes
+a JSON Schema for validation. Use `redact_trace(...)` or
+`redact_trace_content(...)` before sending traces to external systems.
+
+OpenTelemetry/OpenLLMetry-style conversion is dependency-free and lives in the
+integration namespace:
+
+```python
+from pai_sdk import redact_trace_content
+from pai_sdk.integrations.otel import trace_from_otel_spans, trace_to_otel_spans
+
+safe_trace = redact_trace_content(trace)
+otel_spans = trace_to_otel_spans(safe_trace)
+trace = trace_from_otel_spans(otel_spans)
+```
+
+Braintrust is a vendor-specific integration, not part of the top-level SDK API.
 `trace_from_braintrust_rows(...)` converts Braintrust SQL/export rows into a
 pai-sdk `Trace`. It understands common project-log fields like `id`,
 `root_span_id`, `span_attributes`, `input`, `output`, `metadata`, `scores`, and
@@ -291,7 +311,7 @@ reconstructs `ModelMessage[]`; otherwise it preserves the raw input/output and
 Braintrust metadata for analysis.
 
 ```python
-from pai_sdk import trace_from_braintrust_rows
+from pai_sdk.integrations.braintrust import trace_from_braintrust_rows
 
 trace = trace_from_braintrust_rows(rows)
 span = trace.spans[0]

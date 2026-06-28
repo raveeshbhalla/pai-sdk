@@ -1,9 +1,47 @@
 # pai-sdk
-[Vercel AI SDK](https://ai-sdk.dev) ergonomics for Python: the `ModelMessage` type family, `generate_text()`, and `stream_text()` — one message format and one call interface across **OpenAI** (Chat Completions _and_ Responses API), **Anthropic** (Messages API), **Google Gemini** (`google-genai`), **OpenRouter**, **Amazon Bedrock**, **Google Vertex AI**, and **Azure OpenAI**, including multimodal input and multi-step tool calling.
+Python model I/O with [Vercel AI SDK](https://ai-sdk.dev)-style ergonomics: the `ModelMessage` type family, `generate_text()`, and `stream_text()` — one message format and one call interface across **OpenAI** (Chat Completions _and_ Responses API), **Anthropic** (Messages API), **Google Gemini** (`google-genai`), **OpenRouter**, **Amazon Bedrock**, **Google Vertex AI**, and **Azure OpenAI**, including multimodal input and multi-step tool calling.
 
 > **Status: alpha.** Used as the model-IO runtime under eval/optimization
 > tooling; APIs may change before 1.0. Docs: [prompt-config spec](docs/prompt-config.md)
 > · [embedding in a platform](docs/embedding.md) · [CHANGELOG](CHANGELOG.md).
+
+## What pai-sdk is for
+
+pai-sdk exists to give Python applications a provider-near runtime for LLM calls,
+structured prompt configs, and replayable traces. The core primitive is
+`ModelMessage[]`: the same chat transcript shape that providers, tool loops,
+replay systems, and observability backends need to preserve.
+
+On top of that primitive, pai-sdk adds prompt configs that behave like a
+lightweight signature: typed inputs, Mustache-style template variables,
+structured outputs, tool declarations, and stable message/tool ids. A call can
+therefore be inspected both as a semantic row (`inputs -> outputs`) and as the
+actual provider-facing transcript (`messages`, tool calls/results, usage, and
+metadata).
+
+That boundary is deliberate. pai-sdk is not a DSPy replacement and does not ship
+an optimizer runtime. External optimizers such as GEPA `optimize_anything`
+should use pai-sdk as a runner: select a target in the optimizer script, apply a
+candidate prompt/tool description, run examples through `generate_trace()` or
+`stream_trace()`, and score the resulting traces. GEPA, LiteLLM, datasets, and
+search loops stay outside the package.
+
+## AI SDK and DSPy relationship
+
+| Capability | pai-sdk | Vercel AI SDK | DSPy |
+|---|---|---|---|
+| Provider-near messages | Python `ModelMessage` classes with AI-SDK-compatible JSON | Native `ModelMessage` primitive | Not the primary history representation |
+| Text/stream generation | `generate_text()` / `stream_text()` with a shared provider contract | Source inspiration and close API parity | LM calls are owned by DSPy modules/adapters |
+| Tool loop | Multi-step tool calling, tool results in `response.messages`, per-step traces | Similar loop and response-message continuation model | ReAct-style trajectories, but not canonical provider-message replay |
+| Structured input | Prompt `input` schema plus template variables | Usually app-owned before messages are built | Signature input fields |
+| Structured output | `Output.object(...)` and prompt `output` schema | Structured output helpers | Signature output fields |
+| Prompt-as-data | YAML/JSON/code `Prompt` configs with stable message and tool ids | Not a prompt-config system | Signatures/modules are the main abstraction |
+| Semantic history | `Trace` / `Span` store inputs, outputs, usage, metadata | App or middleware owned | Built-in examples/history center on input/output rows |
+| Provider transcript history | `Trace` / `Span.messages` preserve `ModelMessage[]`, including tool calls/results | Response messages can be appended manually | Gap: not a native message-array history alongside each row |
+| Replay | `replay_span()` / `replay_trace()` from stored messages; semantic replay when structured values exist | Possible manually by resending messages | Demos/history are semantic, not provider-near replay |
+| Optimizer support | Target read/apply helpers for external runners; no optimizer dependency | Not an optimizer framework | Optimizer ecosystem, including GEPA |
+| Observability | Versioned trace wire format, redaction, OpenTelemetry/OpenLLMetry-style conversion, Braintrust import integration | Middleware hooks | `inspect_history`, MLflow integrations |
+| Program runtime | Intentionally small: runner, prompts, traces, helpers | Runtime/tooling library | Full module/program abstraction |
 
 ```bash
 pip install "pai-sdk[all]"        # all providers
@@ -329,11 +367,10 @@ Why each exists:
   
 - **Trace helpers** — `generate_trace`/`stream_trace` join structured inputs,
   outputs, usage, metadata, and provider-near `ModelMessage[]` transcripts;
-  `dump_trace`/`load_trace` round-trip the whole trace for replay and
+  `dump_trace`/`load_trace` round-trip versioned `pai.trace.v1` wire data for replay and
   observability imports. Generated traces also record per-step provider request
-  messages after `prepare_step` overrides. `trace_from_braintrust_rows` imports
-  common Braintrust project-log rows into the same shape when rows carry
-  message-shaped inputs.
+  messages after `prepare_step` overrides. `redact_trace` lets exporters scrub
+  sensitive content before leaving the process.
   
 
 ```python
@@ -342,10 +379,11 @@ from pai_sdk import (
     create_provider_registry, custom_provider,
     embed_many, cosine_similarity,
     dump_messages_json, load_messages,
-    generate_trace, stream_trace, dump_trace_json, load_trace, replay_span,
-    trace_from_braintrust_rows,
+    generate_trace, stream_trace, dump_trace_json, load_trace, replay_span, redact_trace_content,
     apply_optimizer_target, read_optimizer_target, system_instruction_target,
 )
+from pai_sdk.integrations.braintrust import trace_from_braintrust_rows
+from pai_sdk.integrations.otel import trace_to_otel_spans
 # Middleware (AI SDK LanguageModelMiddleware): logging, defaults, reasoning
 # extraction, simulated streaming — or write your own transform_params /
 # wrap_generate / wrap_stream.
@@ -372,8 +410,10 @@ traced = await generate_trace(model=model, prompt="Summarize this ticket.")
 trace_text = dump_trace_json(traced.trace)
 trace = load_trace(trace_text)
 rerun = await replay_span(trace.spans[0], model=model)
+safe_trace = redact_trace_content(trace)
+otel_spans = trace_to_otel_spans(safe_trace)
 
-# Import common Braintrust SQL/export rows into pai-sdk Trace/Span objects:
+# Import common Braintrust SQL/export rows through the integration namespace:
 trace = trace_from_braintrust_rows(braintrust_rows)
 
 # External optimizer runners own GEPA/optimize_anything, datasets, and search.
@@ -473,7 +513,7 @@ prompt = Prompt(
     output={"schema": {"type": "object", "properties": {"urgency": {"type": "string"}},
                        "required": ["urgency"], "additionalProperties": False}},
     messages=[
-        {"id": "instructions", "role": "system", "optimize": True,
+        {"id": "instructions", "role": "system",
          "template": "You triage support tickets for {{company}}. Be decisive."},
         {"id": "ticket", "role": "user", "template": "Ticket: {{ticket}}"},
     ],
@@ -490,7 +530,7 @@ result = await generate_text(
     model=anthropic("claude-haiku-4-5"),
     messages=[
         TypedSystemMessage(template="You triage tickets for {{company}}.",
-                           variables={"company": "Acme"}, optimize=True),
+                           variables={"company": "Acme"}),
         TypedUserMessage(template="Ticket: {{ticket}}", variables={"ticket": "It broke"}),
     ],
 )
@@ -528,7 +568,7 @@ evolved.content_hash()                             # candidate identity
 evolved.to_dict()                                  # persist back to JSON/YAML
 ```
 
-Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage` — subclasses that carry `template`, `variables`, `optimize`, and `id` alongside the rendered `content`. Providers see plain messages; `dump_messages` traces keep the structure, so logs record _which instructions_ and _which bindings_ produced every rollout. Template syntax is plain `{{name}}` only (portable to a TS implementation 1:1).
+Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage` — subclasses that carry `template`, `variables`, and `id` alongside the rendered `content`. Providers see plain messages; `dump_messages` traces keep the structure, so logs record _which instructions_ and _which bindings_ produced every rollout. Template syntax is plain `{{name}}` only (portable to a TS implementation 1:1). Prompt configs do not need an `optimize: true` marker; optimizer scripts choose the target ids they want to mutate for each run.
 ## Cost estimates
 Adapters normalize every provider's cache/reasoning token accounting into `usage.input_token_details` / `usage.output_token_details`, so one formula prices all of them — uncached input, cache reads, cache writes, and text+reasoning output each at their own rate:
 
@@ -554,4 +594,4 @@ await refresh_pricing("https://prices.internal/models.json", format="simple")
 
 The "simple" format for self-hosted tables is `{model_id: {"input": per_1M, "output": per_1M, "cache_read"?, "cache_write"?}}`. Or override individual models with `register_pricing` / pass `pricing=`. OpenRouter returns authoritative cost directly in `result.provider_metadata["openrouter"]["cost"]` — prefer that when available. Azure deployments have arbitrary names, so register pricing per deployment.
 ## Not (yet) implemented
-MCP tool loading, image/speech/transcription models, telemetry, and the tool-approval _flow_ (the message types exist; the loop doesn't pause on approvals yet).
+MCP tool loading, image/speech/transcription models, built-in telemetry exporters, and the tool-approval _flow_ (the message types exist; the loop doesn't pause on approvals yet).

@@ -13,7 +13,7 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Awaitable, Optional, Union
+from typing import Any, Awaitable, Callable, Optional, Union
 
 from pydantic import BaseModel
 
@@ -26,6 +26,48 @@ from .results import (
     Usage,
 )
 from .serialize import dump_messages, load_messages
+
+TRACE_SCHEMA_VERSION = "pai.trace.v1"
+
+TRACE_WIRE_SCHEMA: dict[str, Any] = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "pai-sdk trace",
+    "type": "object",
+    "required": ["schemaVersion", "id", "spans"],
+    "additionalProperties": True,
+    "properties": {
+        "schemaVersion": {"const": TRACE_SCHEMA_VERSION},
+        "id": {"type": "string"},
+        "spans": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "rootSpanId",
+                    "inputs",
+                    "outputs",
+                    "messages",
+                    "metadata",
+                ],
+                "additionalProperties": True,
+                "properties": {
+                    "id": {"type": "string"},
+                    "rootSpanId": {"type": "string"},
+                    "parentSpanId": {"type": ["string", "null"]},
+                    "inputs": {"type": "object"},
+                    "outputs": {"type": "object"},
+                    "messages": {"type": "array"},
+                    "usage": {"type": ["object", "null"]},
+                    "metadata": {"type": "object"},
+                },
+            },
+        },
+    },
+}
+
+TracePath = tuple[Union[str, int], ...]
+TraceRedactor = Callable[[TracePath, Any], Any]
 
 
 def _new_id(prefix: str) -> str:
@@ -78,9 +120,14 @@ class Trace:
 
     id: str
     spans: list[Span] = field(default_factory=list)
+    schema_version: str = TRACE_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "spans": [span.to_dict() for span in self.spans]}
+        return {
+            "schemaVersion": self.schema_version,
+            "id": self.id,
+            "spans": [span.to_dict() for span in self.spans],
+        }
 
 
 @dataclass
@@ -371,20 +418,73 @@ def build_trace(
     )
 
 
-def dump_trace(trace: Union[Trace, dict[str, Any]]) -> dict[str, Any]:
+def _redact_value(value: Any, redactor: TraceRedactor, path: TracePath) -> Any:
+    redacted = redactor(path, value)
+    if isinstance(redacted, dict):
+        return {
+            key: _redact_value(item, redactor, (*path, str(key)))
+            for key, item in redacted.items()
+        }
+    if isinstance(redacted, list):
+        return [
+            _redact_value(item, redactor, (*path, index))
+            for index, item in enumerate(redacted)
+        ]
+    return redacted
+
+
+def redact_trace(trace: Union[Trace, dict[str, Any]], redactor: TraceRedactor) -> dict[str, Any]:
+    """Return a redacted JSON-able trace dict without mutating the input."""
+
+    return _redact_value(dump_trace(trace), redactor, ())
+
+
+def redact_trace_content(
+    trace: Union[Trace, dict[str, Any]],
+    *,
+    replacement: str = "[redacted]",
+) -> dict[str, Any]:
+    """Redact common prompt/response text fields before export."""
+
+    sensitive_keys = {"content", "text", "image", "data", "inputs", "outputs"}
+
+    def redactor(path: TracePath, value: Any) -> Any:
+        key = path[-1] if path else None
+        if key in ("inputs", "outputs") and isinstance(value, dict):
+            return {"redacted": True}
+        if key in sensitive_keys and isinstance(value, str):
+            return replacement
+        return value
+
+    return redact_trace(trace, redactor)
+
+
+def dump_trace(
+    trace: Union[Trace, dict[str, Any]],
+    *,
+    redactor: Optional[TraceRedactor] = None,
+) -> dict[str, Any]:
     """Serialize a trace to a JSON-able dict."""
 
     if isinstance(trace, Trace):
-        return trace.to_dict()
-    return _jsonable(trace)
+        data = trace.to_dict()
+    else:
+        data = _jsonable(trace)
+        data.setdefault("schemaVersion", TRACE_SCHEMA_VERSION)
+    if redactor is not None:
+        return _redact_value(data, redactor, ())
+    return data
 
 
 def dump_trace_json(
-    trace: Union[Trace, dict[str, Any]], *, indent: int | None = None
+    trace: Union[Trace, dict[str, Any]],
+    *,
+    indent: int | None = None,
+    redactor: Optional[TraceRedactor] = None,
 ) -> str:
     """Serialize a trace to a JSON string."""
 
-    return json.dumps(dump_trace(trace), indent=indent, ensure_ascii=False)
+    return json.dumps(dump_trace(trace, redactor=redactor), indent=indent, ensure_ascii=False)
 
 
 def _get(data: dict[str, Any], snake: str, camel: str) -> Any:
@@ -456,7 +556,8 @@ def load_trace(data: Union[str, dict[str, Any]]) -> Trace:
     if isinstance(data, str):
         data = json.loads(data)
     spans = [_load_span(span) for span in data.get("spans", [])]
-    return Trace(id=data["id"], spans=spans)
+    schema_version = _get(data, "schema_version", "schemaVersion") or TRACE_SCHEMA_VERSION
+    return Trace(id=data["id"], spans=spans, schema_version=schema_version)
 
 
 def span_input_messages(span: Span) -> list[ModelMessage]:

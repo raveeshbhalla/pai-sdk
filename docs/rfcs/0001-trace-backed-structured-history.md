@@ -467,6 +467,9 @@ provider-near message traces.
 The initial implementation adds:
 
 - `Trace` and `Span`
+- versioned trace wire data (`schemaVersion: pai.trace.v1`) and
+  `TRACE_WIRE_SCHEMA`
+- trace redaction hooks (`redact_trace(...)`, `redact_trace_content(...)`)
 - top-level prompt `input` schemas using the same shorthand/full-JSON-Schema
   forms as `output`
 - `StepResult.request_messages` and trace `metadata.step_request_messages` so
@@ -484,8 +487,11 @@ The initial implementation adds:
 - `system_instruction_target(...)` for the common external-runner case of
   optimizing one selected system-instruction template
 - failed-call trace capture by attaching `.trace` to the original exception
-- `trace_from_braintrust_rows(...)` for best-effort import of Braintrust
-  project-log rows into pai-sdk `Trace` / `Span` objects
+- dependency-free OpenTelemetry/OpenLLMetry-style span-dict conversion in
+  `pai_sdk.integrations.otel`
+- `pai_sdk.integrations.braintrust.trace_from_braintrust_rows(...)` for
+  best-effort import of Braintrust project-log rows into pai-sdk `Trace` /
+  `Span` objects
 
 Generated pai-sdk spans include `metadata.input_message_count`, which records
 the boundary between rendered inputs and generated response messages. That
@@ -500,11 +506,15 @@ reconstruct each evolved prompt with `apply_optimizer_target(...)`. That keeps
 variables, tools, and output schemas under pai-sdk's structural contract while
 GEPA owns the search and dataset handling outside the package.
 
-The Braintrust importer is deliberately not customer- or app-specific. It reads
-common export/SQL fields (`id`, `root_span_id`, `span_attributes`, `input`,
-`output`, `metadata`, `scores`, `metrics`) and reconstructs `ModelMessage[]`
-only when message-shaped content is present. Otherwise, it preserves raw
-input/output and Braintrust metadata for analysis.
+The OpenTelemetry converter is the preferred neutral observability boundary.
+It stores lossless pai-sdk payloads under `pai.*` attributes and mirrors usage
+and model metadata into common `gen_ai.*` attributes when available.
+
+The Braintrust importer is deliberately an integration, not a core SDK concept.
+It reads common export/SQL fields (`id`, `root_span_id`, `span_attributes`,
+`input`, `output`, `metadata`, `scores`, `metrics`) and reconstructs
+`ModelMessage[]` only when message-shaped content is present. Otherwise, it
+preserves raw input/output and Braintrust metadata for analysis.
 
 ## Hydration
 

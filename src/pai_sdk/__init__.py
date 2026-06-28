@@ -12,12 +12,6 @@ for Python, with OpenAI, Anthropic, Google Gemini, and OpenRouter providers.
 """
 
 from .agent import Agent
-from .braintrust_import import (
-    braintrust_message_to_model_message,
-    braintrust_messages_to_model_messages,
-    span_from_braintrust_row,
-    trace_from_braintrust_rows,
-)
 from .embedding import (
     EmbeddingModel,
     EmbeddingUsage,
@@ -131,12 +125,18 @@ from .serialize import dump_messages, dump_messages_json, load_messages
 from .trace import (
     GenerateTraceResult,
     Span,
+    TRACE_SCHEMA_VERSION,
+    TRACE_WIRE_SCHEMA,
     StreamTraceResult,
     Trace,
+    TracePath,
+    TraceRedactor,
     dump_trace,
     dump_trace_json,
     generate_trace,
     load_trace,
+    redact_trace,
+    redact_trace_content,
     replay_span,
     replay_trace,
     span_input_messages,
@@ -229,10 +229,6 @@ __all__ = [
     "Output",
     "parse_partial_json",
     "Agent",
-    "braintrust_message_to_model_message",
-    "braintrust_messages_to_model_messages",
-    "span_from_braintrust_row",
-    "trace_from_braintrust_rows",
     "PrepareStepResult",
     "PrepareStepFn",
     "RepairToolCallFn",
@@ -312,9 +308,15 @@ __all__ = [
     "GenerateTraceResult",
     "Trace",
     "Span",
+    "TRACE_SCHEMA_VERSION",
+    "TRACE_WIRE_SCHEMA",
+    "TracePath",
+    "TraceRedactor",
     "dump_trace",
     "dump_trace_json",
     "load_trace",
+    "redact_trace",
+    "redact_trace_content",
     "replay_span",
     "replay_trace",
     "span_input_messages",
