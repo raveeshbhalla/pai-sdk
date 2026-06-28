@@ -123,6 +123,7 @@ from .optimization import (
     OptimizerTargetKind,
     apply_optimizer_target,
     list_optimizer_targets,
+    read_optimizer_target,
     system_instruction_target,
 )
 from .provider import CallOptions, FunctionToolSpec, LanguageModel, ProviderResult
@@ -398,6 +399,7 @@ __all__ = [
     "OptimizerTarget",
     "OptimizerTargetKind",
     "list_optimizer_targets",
+    "read_optimizer_target",
     "apply_optimizer_target",
     "system_instruction_target",
 ]

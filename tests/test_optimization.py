@@ -8,6 +8,7 @@ from pai_sdk import (
     apply_optimizer_target,
     list_optimizer_targets,
     load_prompt,
+    read_optimizer_target,
     system_instruction_target,
 )
 
@@ -42,6 +43,12 @@ def test_optimizer_targets_are_selected_at_runtime():
         OptimizerTarget.message_template("ticket"),
         OptimizerTarget.tool_description("lookup"),
     ]
+    assert read_optimizer_target(prompt, OptimizerTarget.message_template("system")) == (
+        "Help {{company}} users."
+    )
+    assert read_optimizer_target(prompt, OptimizerTarget.tool_description("lookup")) == (
+        "Look up customer data."
+    )
 
     evolved = apply_optimizer_target(
         prompt,
@@ -63,6 +70,8 @@ def test_optimizer_targets_are_selected_at_runtime():
             OptimizerTarget.message_template("system"),
             "Help everyone.",
         )
+    with pytest.raises(PromptError, match="No message"):
+        read_optimizer_target(prompt, OptimizerTarget.message_template("missing"))
 
 
 def test_system_instruction_target_requires_disambiguation():

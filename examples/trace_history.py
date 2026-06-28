@@ -28,6 +28,7 @@ from pai_sdk import (
     dump_trace_json,
     load_prompt,
     load_trace,
+    read_optimizer_target,
     replay_span,
     stream_trace,
 )
@@ -111,7 +112,9 @@ async def main() -> None:
     evolved = apply_optimizer_target(
         prompt,
         OptimizerTarget.message_template("system"),
-        "You triage {{company}} tickets with concise severity labels.",
+        read_optimizer_target(prompt, OptimizerTarget.message_template("system")).replace(
+            "tickets.", "tickets with concise severity labels."
+        ),
     )
     print("evolved system:", evolved.messages[0].template)
 

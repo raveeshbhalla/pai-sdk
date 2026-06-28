@@ -474,6 +474,8 @@ The initial implementation adds:
 - `span_input_messages(...)`, `span_response_messages(...)`, `replay_span(...)`,
   and `replay_trace(...)`
 - run-time optimizer target helpers for message templates and tool descriptions
+- `read_optimizer_target(...)` and `apply_optimizer_target(...)` for external
+  optimizer candidate loops
 - `system_instruction_target(...)` for the common external-runner case of
   optimizing one selected system-instruction template
 - failed-call trace capture by attaching `.trace` to the original exception
@@ -485,11 +487,11 @@ the boundary between rendered inputs and generated response messages. That
 lets replay helpers rerun from the input prefix while the full `span.messages`
 continues to store the byte-faithful provider transcript.
 
-An external GEPA runner can pass only the selected system-instruction text as
-the `seed_candidate`, then reconstruct each evolved prompt with
-`apply_optimizer_target(...)`. That keeps variables, tools, and output schemas
-under pai-sdk's structural contract while GEPA owns the search and dataset
-handling outside the package.
+An external GEPA runner can read the selected system-instruction text with
+`read_optimizer_target(...)` and pass it as the `seed_candidate`, then
+reconstruct each evolved prompt with `apply_optimizer_target(...)`. That keeps
+variables, tools, and output schemas under pai-sdk's structural contract while
+GEPA owns the search and dataset handling outside the package.
 
 The Braintrust importer is deliberately not customer- or app-specific. It reads
 common export/SQL fields (`id`, `root_span_id`, `span_attributes`, `input`,

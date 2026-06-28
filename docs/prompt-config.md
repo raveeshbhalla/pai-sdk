@@ -258,10 +258,10 @@ For example, a GEPA `optimize_anything` script can choose to optimize the
 system instruction by sending only that template text as the candidate:
 
 ```python
-from pai_sdk import apply_optimizer_target, system_instruction_target
+from pai_sdk import apply_optimizer_target, read_optimizer_target, system_instruction_target
 
 target = system_instruction_target(prompt, message_id="system")
-seed_candidate = next(message.template for message in prompt.messages if message.id == target.id)
+seed_candidate = read_optimizer_target(prompt, target)
 
 async def evaluate_candidate(candidate_text, example):
     candidate_prompt = apply_optimizer_target(prompt, target, candidate_text)

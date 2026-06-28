@@ -342,7 +342,7 @@ from pai_sdk import (
     dump_messages_json, load_messages,
     generate_trace, stream_trace, dump_trace_json, load_trace, replay_span,
     trace_from_braintrust_rows,
-    apply_optimizer_target, system_instruction_target,
+    apply_optimizer_target, read_optimizer_target, system_instruction_target,
 )
 # Middleware (AI SDK LanguageModelMiddleware): logging, defaults, reasoning
 # extraction, simulated streaming — or write your own transform_params /
@@ -377,6 +377,7 @@ trace = trace_from_braintrust_rows(braintrust_rows)
 # External optimizer runners own GEPA/optimize_anything, datasets, and search.
 # pai-sdk just provides safe target selection, candidate application, and traces.
 target = system_instruction_target(prompt, message_id="system")
+seed_candidate = read_optimizer_target(prompt, target)
 candidate_prompt = apply_optimizer_target(
     prompt,
     target,
