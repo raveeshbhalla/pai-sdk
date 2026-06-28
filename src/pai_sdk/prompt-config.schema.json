@@ -110,16 +110,16 @@
     },
     "system": {
       "$ref": "#/definitions/simpleMessage",
-      "description": "Simple form: the system prompt template. Optimizable by default (it IS the instructions). Mutually exclusive with messages:."
+      "description": "Simple form: the system prompt template. Mutually exclusive with messages:."
     },
     "user": {
       "$ref": "#/definitions/simpleMessage",
-      "description": "Simple form: the user message template. Never optimized. Mutually exclusive with messages:."
+      "description": "Simple form: the user message template. Mutually exclusive with messages:."
     },
     "messages": {
       "type": "array",
       "minItems": 1,
-      "description": "General form: explicit message list (multiple system blocks, few-shot assistant turns, per-message optimize/id). Mutually exclusive with top-level system/user.",
+      "description": "General form: explicit message list (multiple system blocks, few-shot assistant turns, stable ids). Mutually exclusive with top-level system/user.",
       "items": {
         "$ref": "#/definitions/message"
       }
@@ -220,7 +220,7 @@
         "optimize": {
           "type": "boolean",
           "default": false,
-          "description": "Whether a reflective optimizer (e.g. GEPA) may rewrite this text. Template mutations must preserve the {{variable}} set."
+          "description": "Legacy metadata. Optimizer runs should choose target ids externally; template mutations must preserve the {{variable}} set."
         },
         "id": {
           "type": "string",
@@ -282,7 +282,7 @@
       "properties": {
         "description": {
           "type": "string",
-          "description": "What the tool does AND when to call it. With optimize: true, an optimizer may rewrite this text; the tool name and input schema are the contract and never change."
+          "description": "What the tool does AND when to call it. Optimizer runs may target this description by tool name; the tool name and input schema are the contract and never change."
         },
         "optimize": {
           "type": "boolean",

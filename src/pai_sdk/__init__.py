@@ -12,6 +12,12 @@ for Python, with OpenAI, Anthropic, Google Gemini, and OpenRouter providers.
 """
 
 from .agent import Agent
+from .braintrust_import import (
+    braintrust_message_to_model_message,
+    braintrust_messages_to_model_messages,
+    span_from_braintrust_row,
+    trace_from_braintrust_rows,
+)
 from .embedding import (
     EmbeddingModel,
     EmbeddingUsage,
@@ -112,8 +118,30 @@ from .output import (
     stream,
     stream_object,
 )
+from .optimization import (
+    OptimizerTarget,
+    OptimizerTargetKind,
+    apply_optimizer_target,
+    list_optimizer_targets,
+    system_instruction_target,
+)
 from .provider import CallOptions, FunctionToolSpec, LanguageModel, ProviderResult
 from .serialize import dump_messages, dump_messages_json, load_messages
+from .trace import (
+    GenerateTraceResult,
+    Span,
+    StreamTraceResult,
+    Trace,
+    dump_trace,
+    dump_trace_json,
+    generate_trace,
+    load_trace,
+    replay_span,
+    replay_trace,
+    span_input_messages,
+    span_response_messages,
+    stream_trace,
+)
 from .registry import (
     CustomProvider,
     ProviderRegistry,
@@ -183,8 +211,11 @@ __version__ = "0.4.0"
 __all__ = [
     # core functions
     "generate_text",
+    "generate_trace",
     "stream_text",
+    "stream_trace",
     "StreamTextResult",
+    "StreamTraceResult",
     "generate",
     "stream",
     "generate_object",
@@ -194,6 +225,10 @@ __all__ = [
     "Output",
     "parse_partial_json",
     "Agent",
+    "braintrust_message_to_model_message",
+    "braintrust_messages_to_model_messages",
+    "span_from_braintrust_row",
+    "trace_from_braintrust_rows",
     "PrepareStepResult",
     "PrepareStepFn",
     "RepairToolCallFn",
@@ -270,6 +305,16 @@ __all__ = [
     "load_messages",
     # results
     "GenerateTextResult",
+    "GenerateTraceResult",
+    "Trace",
+    "Span",
+    "dump_trace",
+    "dump_trace_json",
+    "load_trace",
+    "replay_span",
+    "replay_trace",
+    "span_input_messages",
+    "span_response_messages",
     "StepResult",
     "ToolResult",
     "Usage",
@@ -344,4 +389,9 @@ __all__ = [
     "compile_output_shorthand",
     "PROMPT_CONFIG_SCHEMA",
     "PromptTool",
+    "OptimizerTarget",
+    "OptimizerTargetKind",
+    "list_optimizer_targets",
+    "apply_optimizer_target",
+    "system_instruction_target",
 ]

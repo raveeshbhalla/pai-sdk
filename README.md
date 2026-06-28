@@ -10,7 +10,7 @@ pip install "pai-sdk[all]"        # all providers
 pip install "pai-sdk[anthropic]"  # or pick: openai / anthropic / google / bedrock / vertex
 
 # From a checkout (not yet on PyPI):
-pip install -e "/Users/raveesh/dev/pai-sdk[all]"   # local checkout
+pip install -e ".[all]"   # run from the repo root
 # or pin by git tag once a remote exists:
 pip install "pai-sdk[anthropic] @ git+https://github.com/raveeshbhalla/pai-sdk@v0.3.0"
 ```
@@ -327,7 +327,11 @@ Why each exists:
   
 - **Embeddings** — similarity for retrieval, dedup, or clustering eval data; same provider abstraction as text models.
   
-- **Trace helpers** — `dump_messages`/`load_messages` make ModelMessage the log schema: a stored trace is byte-replayable input, not a lossy printout.
+- **Trace helpers** — `generate_trace`/`stream_trace` join structured inputs,
+  outputs, usage, metadata, and provider-near `ModelMessage[]` transcripts;
+  `dump_trace`/`load_trace` round-trip the whole trace for replay and
+  observability imports. `trace_from_braintrust_rows` imports common Braintrust
+  project-log rows into the same shape when rows carry message-shaped inputs.
   
 
 ```python
@@ -336,6 +340,9 @@ from pai_sdk import (
     create_provider_registry, custom_provider,
     embed_many, cosine_similarity,
     dump_messages_json, load_messages,
+    generate_trace, stream_trace, dump_trace_json, load_trace, replay_span,
+    trace_from_braintrust_rows,
+    apply_optimizer_target, system_instruction_target,
 )
 # Middleware (AI SDK LanguageModelMiddleware): logging, defaults, reasoning
 # extraction, simulated streaming — or write your own transform_params /
@@ -357,10 +364,29 @@ result = await embed_many(model=openai.embedding("text-embedding-3-small"),
 # structured fields (templates, variable bindings) round-trip intact:
 text = dump_messages_json([*messages, *result.response.messages])
 history = load_messages(text)   # ready to re-send
+
+# Whole traces keep the structured history row and provider transcript together:
+traced = await generate_trace(model=model, prompt="Summarize this ticket.")
+trace_text = dump_trace_json(traced.trace)
+trace = load_trace(trace_text)
+rerun = await replay_span(trace.spans[0], model=model)
+
+# Import common Braintrust SQL/export rows into pai-sdk Trace/Span objects:
+trace = trace_from_braintrust_rows(braintrust_rows)
+
+# External optimizer runners own GEPA/optimize_anything, datasets, and search.
+# pai-sdk just provides safe target selection, candidate application, and traces.
+target = system_instruction_target(prompt, message_id="system")
+candidate_prompt = apply_optimizer_target(
+    prompt,
+    target,
+    "You triage support tickets for {{company}}. Be concise and calibrated.",
+)
+traced = await candidate_prompt.generate_trace({"company": "Acme", "ticket": "..."})
 ```
 ## Typed messages & prompt configs
 
-Prompts as data: define them in YAML or JSON (in the codebase or fetched from a service) or directly in code, with Mustache-style `{{variable}}` slots and an explicit optimization contract. All three forms produce the same `Prompt` object. Single braces are literal text, so JSON examples can appear naturally in templates.
+Prompts as data: define them in YAML or JSON (in the codebase or fetched from a service) or directly in code, with Mustache-style `{{variable}}` slots and stable ids that external optimizer runners can target. All three forms produce the same `Prompt` object. Single braces are literal text, so JSON examples can appear naturally in templates.
 
 ### Creating a prompt in YAML
 
@@ -374,9 +400,9 @@ params:
 output:                       # field: type shorthand, compiled to JSON Schema
   urgency: [low, medium, high]   # enum
   summary: string                # string / number / integer / boolean / string[]
-system: |                     # optimizable by default — this IS the instructions
+system: |
   You triage support tickets for {{company}}. Be decisive.
-user: "Ticket: {{ticket}}"    # never optimized
+user: "Ticket: {{ticket}}"
 ```
 
 ```python
@@ -385,13 +411,12 @@ from pai_sdk import load_prompt
 prompt = load_prompt("prompts/triage.yaml")
 ```
 
-That's the simple form. The general form is an explicit `messages:` list — use it for multiple system blocks (e.g. frozen policy text next to mutable instructions), few-shot assistant turns, or per-message `optimize`/`id` control — and `output: {schema: {...}}` accepts full JSON Schema:
+That's the simple form. The general form is an explicit `messages:` list — use it for multiple system blocks (e.g. frozen policy text next to mutable instructions), few-shot assistant turns, or stable message ids that optimizer scripts can target at run time — and `output: {schema: {...}}` accepts full JSON Schema:
 
 ```yaml
 messages:
   - id: instructions
     role: system
-    optimize: true          # reflection (e.g. GEPA) MAY rewrite this text
     template: |
       You triage support tickets for {{company}}. Be decisive.
   - id: policy
@@ -468,16 +493,15 @@ result = await generate_text(
 ### Tools in configs
 
 Configs can declare tool interfaces (name, description, input schema — same
-shorthand as `output:`); behavior binds at call time. With `optimize: true`,
-a reflective optimizer may rewrite the tool **description** (when-to-call
-errors are description failures) while the name and schema stay contractual
-— enforced by `with_tool_description`, like `with_template`:
+shorthand as `output:`); behavior binds at call time. Optimizer scripts may
+rewrite a selected tool **description** (when-to-call errors are description
+failures) while the name and schema stay contractual — enforced by
+`with_tool_description`, like `with_template`:
 
 ```yaml
 tools:
   get_weather:
     description: Get current weather. Call when asked about conditions.
-    optimize: true
     input: { city: string }
 max_steps: 5
 ```
@@ -493,7 +517,6 @@ result = await prompt.generate({"company": "Acme", "ticket": "It broke"})
 print(result.output)                               # validated against the schema
 # The optimization contract, enforced:
 evolved = prompt.with_template("instructions", "You are {{company}}'s expert...")
-prompt.with_template("ticket", "...")              # PromptError: not optimize: true
 prompt.with_template("instructions", "no vars")    # PromptError: variable set changed
 evolved.content_hash()                             # candidate identity
 evolved.to_dict()                                  # persist back to JSON/YAML

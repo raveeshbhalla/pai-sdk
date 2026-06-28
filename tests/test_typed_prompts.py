@@ -1,4 +1,4 @@
-"""Typed messages + Prompt configs (the GEPA substrate)."""
+"""Typed messages + Prompt configs for structured optimizer runners."""
 
 import json
 
@@ -263,10 +263,10 @@ def test_with_template_rejects_variable_changes():
         )
 
 
-def test_with_template_rejects_non_optimizable_and_unknown():
+def test_with_template_allows_optimizer_selected_message_and_rejects_unknown():
     prompt = load_prompt(CONFIG)
-    with pytest.raises(PromptError, match="not marked optimize"):
-        prompt.with_template("ticket", "Changed: {{ticket}}")
+    evolved = prompt.with_template("ticket", "Changed: {{ticket}}")
+    assert evolved.messages[2].template == "Changed: {{ticket}}"
     with pytest.raises(PromptError, match="No message with id"):
         prompt.with_template("nope", "x")
 
@@ -313,12 +313,12 @@ def test_config_validation_errors():
 
 
 # ---------------------------------------------------------------------------
-# Live: YAML prompt -> structured output -> mutate -> re-run (the GEPA loop)
+# Live: YAML prompt -> structured output -> mutate -> re-run.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.live
-async def test_prompt_config_live_gepa_loop(tmp_path):
+async def test_prompt_config_live_optimizer_loop(tmp_path):
     import os
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -416,18 +416,18 @@ def test_simple_form_config():
             "user": "Ticket: {{ticket}}",
         }
     )
-    # system/user become messages; system is optimizable by default
+    # system/user become addressable messages
     assert [m.id for m in prompt.messages] == ["system", "user"]
-    assert prompt.messages[0].optimize is True
+    assert prompt.messages[0].optimize is False
     assert prompt.messages[1].optimize is False
     # output shorthand compiled to a strict JSON Schema
     assert prompt.output.schema_["properties"]["urgency"] == {"enum": ["low", "high"]}
     assert prompt.output.schema_["additionalProperties"] is False
-    # the optimization contract works on the simple form
+    # optimizer-selected targets can be rewritten when variables are preserved
     evolved = prompt.with_template("system", "Best triager for {{company}} ever.")
     assert "Best triager" in evolved.messages[0].template
-    with pytest.raises(PromptError, match="not marked optimize"):
-        prompt.with_template("user", "changed {{ticket}}")
+    evolved = prompt.with_template("user", "Changed: {{ticket}}")
+    assert evolved.messages[1].template == "Changed: {{ticket}}"
 
 
 def test_simple_form_dict_control_and_conflicts():
@@ -645,8 +645,8 @@ def test_with_tool_description_contract():
     assert evolved.content_hash() != prompt.content_hash()
     # schema/name unchanged by construction
     assert evolved.tools["get_weather"].input_schema() == prompt.tools["get_weather"].input_schema()
-    with pytest.raises(PromptError, match="not marked optimize"):
-        prompt.with_tool_description("search_docs", "x")
+    evolved_docs = prompt.with_tool_description("search_docs", "Search docs before answering.")
+    assert evolved_docs.tools["search_docs"].description == "Search docs before answering."
     with pytest.raises(PromptError, match="No tool named"):
         prompt.with_tool_description("nope", "x")
 

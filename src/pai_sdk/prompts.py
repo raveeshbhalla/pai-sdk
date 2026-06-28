@@ -19,24 +19,23 @@ form covers the common case — one system prompt, one user template:
       urgency: [low, medium, high]          # field: type shorthand (enum)
       summary: string                       # string/number/integer/boolean,
       tags: string[]                        # arrays, nested objects
-    system: |                               # optimize: true by default
+    system: |
       You are a support triage assistant for {{company_name}}. ...
-    user: "Ticket: {{ticket_text}}"         # never optimized
+    user: "Ticket: {{ticket_text}}"
 
 `system`/`user` accept a plain template string or
-{template, optimize, id} for control. The general form replaces them with an
+{template, content, id} for control. The general form replaces them with an
 explicit `messages:` list (multiple system blocks, few-shot assistant turns,
-per-message optimize flags):
+stable ids for optimizer-selected targets):
 
     messages:
       - id: instructions
         role: system
-        optimize: true                      # reflection MAY rewrite this text
         template: |
           You are a support triage assistant for {{company_name}}. ...
       - id: policy
         role: system
-        content: "Never reveal internal data."   # literal, never optimized
+        content: "Never reveal internal data."
       - id: ticket
         role: user
         template: "Ticket: {{ticket_text}}"
@@ -44,10 +43,10 @@ per-message optimize flags):
 `output` is either field-type shorthand (above) or a full JSON Schema via
 `output: {schema: {...}}`.
 
-The optimization contract (for GEPA-style optimizers):
+The optimization contract (for external optimizer runners):
 - `{{variables}}` are structurally untouchable — they are bindings, not text.
-- Only messages with `optimize: true` may be rewritten, via `with_template()`,
-  which also rejects any mutation that changes the template's placeholder set.
+- Optimizer scripts choose which message/tool ids to target. `with_template()`
+  rejects any mutation that changes a template's placeholder set.
 - `content_hash()` identifies a candidate; `to_dict()` persists evolved
   prompts back to JSON/YAML.
 """
@@ -166,13 +165,13 @@ class PromptOutput(BaseModel):
 class PromptTool(BaseModel):
     """A tool *interface* declared in a prompt config.
 
-    The config carries what is serializable and optimizable — description and
-    input schema; behavior binds at call time via `prompt.generate(...,
+    The config carries what is serializable — description and input schema;
+    behavior binds at call time via `prompt.generate(...,
     handlers={name: fn})`. Declared tools without a handler are client-side:
     calls come back on result.tool_calls. The name (the dict key) and the
-    schema are the contract; with `optimize: true` the DESCRIPTION text may be
-    rewritten by an optimizer (descriptions are instructions — when-to-call
-    errors are description failures).
+    schema are the contract; optimizer scripts may target DESCRIPTION text by
+    tool name (descriptions are instructions — when-to-call errors are
+    description failures).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -240,9 +239,6 @@ class Prompt(BaseModel):
                     {
                         "role": "system",
                         "id": "system",
-                        # the system prompt IS the instructions — optimizable
-                        # by default in the simple form
-                        "optimize": True,
                         **entry,
                     }
                 )
@@ -276,7 +272,11 @@ class Prompt(BaseModel):
         return names
 
     def optimizable_messages(self) -> list[PromptMessage]:
-        """The messages a reflective optimizer may rewrite."""
+        """Legacy helper: messages marked with `optimize: true`.
+
+        New optimizer integrations should choose targets in the optimizer run
+        rather than relying on persistent prompt metadata.
+        """
         return [m for m in self.messages if m.optimize]
 
     def content_hash(self) -> str:
@@ -292,10 +292,9 @@ class Prompt(BaseModel):
     def with_template(self, message_id: str, new_template: str) -> "Prompt":
         """A new Prompt with one message's template rewritten.
 
-        Enforces the optimization contract: the message must exist, must be
-        `optimize: true`, and the new template must bind exactly the same
-        variable set (placeholders are data plumbing — not the optimizer's to
-        add or remove).
+        Enforces the structural optimization contract: the message must exist
+        and the new template must bind exactly the same variable set
+        (placeholders are data plumbing — not the optimizer's to add/remove).
         """
         index = next(
             (i for i, m in enumerate(self.messages) if m.id == message_id), None
@@ -303,11 +302,6 @@ class Prompt(BaseModel):
         if index is None:
             raise PromptError(f"No message with id '{message_id}'.")
         message = self.messages[index]
-        if not message.optimize:
-            raise PromptError(
-                f"Message '{message_id}' is not marked optimize: true — "
-                "it must not be rewritten."
-            )
         if message.template is None:
             raise PromptError(f"Message '{message_id}' has literal content, not a template.")
         old_vars = set(extract_variables(message.template))
@@ -324,18 +318,13 @@ class Prompt(BaseModel):
     def with_tool_description(self, tool_name: str, new_description: str) -> "Prompt":
         """A new Prompt with one tool's DESCRIPTION rewritten.
 
-        Same contract shape as with_template: the tool must exist and be
-        `optimize: true`. The tool's name and input schema are the contract
-        and cannot be changed through this method by construction.
+        Same contract shape as with_template: the tool must exist. The tool's
+        name and input schema are the contract and cannot be changed through
+        this method by construction.
         """
         tool_config = self.tools.get(tool_name)
         if tool_config is None:
             raise PromptError(f"No tool named '{tool_name}'.")
-        if not tool_config.optimize:
-            raise PromptError(
-                f"Tool '{tool_name}' is not marked optimize: true — "
-                "its description must not be rewritten."
-            )
         tools = {
             **self.tools,
             tool_name: tool_config.model_copy(update={"description": new_description}),
@@ -343,7 +332,11 @@ class Prompt(BaseModel):
         return self.model_copy(update={"tools": tools})
 
     def optimizable_tools(self) -> dict[str, PromptTool]:
-        """The tools whose descriptions a reflective optimizer may rewrite."""
+        """Legacy helper: tools marked with `optimize: true`.
+
+        New optimizer integrations should choose targets in the optimizer run
+        rather than relying on persistent prompt metadata.
+        """
         return {name: t for name, t in self.tools.items() if t.optimize}
 
     # -- rendering & execution ------------------------------------------------
@@ -447,6 +440,29 @@ class Prompt(BaseModel):
         `overrides` are generate_text kwargs and win over `params`."""
         return await generate_text(**self._call_kwargs(variables, model, handlers, overrides))
 
+    async def generate_trace(
+        self,
+        variables: Optional[dict[str, Any]] = None,
+        *,
+        model: Any = None,
+        handlers: Optional[dict[str, Any]] = None,
+        **overrides: Any,
+    ):
+        """Render and run this prompt, returning a result with `.trace`.
+
+        The trace span joins the structured `variables`, parsed outputs, usage,
+        metadata, and full replayable `ModelMessage[]` history for the call.
+        """
+        from .trace import generate_trace
+
+        return await generate_trace(
+            self,
+            variables,
+            model=model,
+            handlers=handlers,
+            **overrides,
+        )
+
     def stream(
         self,
         variables: Optional[dict[str, Any]] = None,
@@ -457,6 +473,29 @@ class Prompt(BaseModel):
     ):
         """Render and run stream_text with this prompt's config."""
         return stream_text(**self._call_kwargs(variables, model, handlers, overrides))
+
+    def stream_trace(
+        self,
+        variables: Optional[dict[str, Any]] = None,
+        *,
+        model: Any = None,
+        handlers: Optional[dict[str, Any]] = None,
+        **overrides: Any,
+    ):
+        """Render and stream this prompt, returning a stream result with `.trace`.
+
+        The trace is awaitable after the stream has completed:
+        `trace = await result.trace`.
+        """
+        from .trace import stream_trace
+
+        return stream_trace(
+            self,
+            variables,
+            model=model,
+            handlers=handlers,
+            **overrides,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,8 @@ The prompt config is pai-sdk's "prompts as data" format: a JSON-compatible
 document (authored as YAML, JSON, or a Python dict) that bundles a model
 reference, call parameters, an output schema, and message templates with
 `{{variable}}` slots. It is designed to be stored in a repo, served by a prompt
-service, and **mutated by reflective optimizers under an enforced contract**.
+service, and safely rewritten by external optimizer runners under an enforced
+contract.
 
 The machine-readable schema ships in the package at
 `pai_sdk/prompt-config.schema.json` (exported as `PROMPT_CONFIG_SCHEMA`;
@@ -30,13 +31,13 @@ A config must yield at least one message (simple or general form).
 ## Simple form
 
 ```yaml
-system: |                  # optimize: true by DEFAULT — this IS the instructions
+system: |
   You triage support tickets for {{company}}. Be decisive.
-user: "Ticket: {{ticket}}" # optimize: false — never rewritten
+user: "Ticket: {{ticket}}"
 ```
 
-`system`/`user` accept a string template or `{template|content, optimize, id}`
-for control. They normalize to a `messages` list with ids `"system"` / `"user"`.
+`system`/`user` accept a string template or `{template|content, id}` for
+control. They normalize to a `messages` list with ids `"system"` / `"user"`.
 
 ## General form
 
@@ -44,7 +45,6 @@ for control. They normalize to a `messages` list with ids `"system"` / `"user"`.
 messages:
   - id: instructions       # stable id — addressing for mutations
     role: system           # system | user | assistant
-    optimize: true         # an optimizer MAY rewrite this text
     template: |            # interpolated; placeholders are the contract
       You triage support tickets for {{company}}.
   - id: policy
@@ -113,7 +113,6 @@ come back on `result.tool_calls`.
 tools:
   get_weather:
     description: Get current weather. Call when asked about conditions.
-    optimize: true        # an optimizer MAY rewrite the DESCRIPTION
     input:                # same field:type shorthand as output:
       city: string
   search_docs:
@@ -139,14 +138,14 @@ optimizer-produced versions safe to adopt automatically:
 1. **Variables are structurally untouchable.** Placeholders are bindings, not
    text. `Prompt.with_template(message_id, new_template)` rejects any mutation
    whose placeholder set differs from the original.
-2. **Only `optimize: true` messages may be rewritten.** Mutating any other
-   message raises `PromptError`.
-3. **Tool descriptions are optimizable prose; names and schemas are the
+2. **Optimizer targets live in the optimizer script.** Prompt configs expose
+   stable message ids and tool names; each optimizer run decides which ids it
+   is allowed to rewrite.
+3. **Tool descriptions are addressable prose; names and schemas are the
    contract.** `with_tool_description(name, text)` rewrites a tool's
-   description only when that tool is `optimize: true`; the name and input
-   schema cannot change through mutation by construction. (When-to-call
-   errors are description failures — descriptions are a first-class
-   optimization target.) `optimizable_tools()` lists the eligible tools.
+   description while the name and input schema remain unchanged by
+   construction. (When-to-call errors are description failures —
+   descriptions are a first-class optimization target.)
 4. **Mutations are non-destructive.** `with_template` returns a new `Prompt`;
    `content_hash()` (16-hex) identifies a candidate; `to_dict()` serializes it
    back to config form for persistence/promotion.
@@ -171,6 +170,8 @@ prompt.variables             # ordered template variable names (the signature)
 messages = prompt.render({"company": "Acme", "ticket": "..."})  # typed messages
 result = await prompt.generate({...}, model=optional_override, **overrides)
 stream = prompt.stream({...})
+traced = await prompt.generate_trace({...}, model=optional_override)
+traced_stream = prompt.stream_trace({...}, model=optional_override)
 ```
 
 `render()` produces `TypedSystemMessage` / `TypedUserMessage` /
@@ -178,3 +179,100 @@ stream = prompt.stream({...})
 `optimize`, and `id` alongside the rendered `content`. Providers only read the
 rendered content; `dump_messages` traces preserve the structure, so logs record
 which instructions and which bindings produced every call.
+
+## Trace-backed generation
+
+`Prompt.generate_trace(...)` returns a generation result wrapper with the normal
+`GenerateTextResult` fields plus a replayable `Trace`. `Prompt.stream_trace(...)`
+does the same for `stream_text`; its trace is awaitable after the stream
+finishes:
+
+```python
+from pai_sdk import dump_trace_json, load_trace, replay_span
+
+traced = await prompt.generate_trace({"company": "Acme", "ticket": "..."})
+streamed = prompt.stream_trace({"company": "Acme", "ticket": "..."})
+
+traced.text
+traced.output
+stream_trace = await streamed.trace
+
+span = traced.trace.spans[0]
+span.inputs      # variables passed to render()
+span.outputs     # text/object/finish/tool summaries
+span.messages    # rendered input messages + assistant/tool/final messages
+span.usage       # total token usage when available
+span.metadata    # prompt/model/response metadata
+
+loaded = load_trace(dump_trace_json(traced.trace))
+rerun = await replay_span(loaded.spans[0], model=alternate_model)
+```
+
+`span.messages` is the byte-faithful provider transcript for that span. The
+whole `Trace` is the replayable unit: imported traces may omit usage or some
+metadata, but should preserve span relationships, structured inputs/outputs,
+and provider-near messages when available. Semantic reruns with `replay_span`
+use `metadata.input_message_count` to send only the recorded input prefix; this
+boundary is recorded by pai-sdk trace helpers and can be provided by importers.
+
+If generation fails after messages have been rendered, `generate_trace(...)`
+and `stream_trace(...)` attach a failed `Trace` to the original exception as
+`.trace`. The span includes the rendered input messages, `outputs.error`, and
+`metadata.error` so failed calls remain observable and replayable from the same
+input prefix.
+
+## External optimizer runners
+
+pai-sdk does not ship or depend on an optimizer. External runners own GEPA,
+`optimize_anything`, datasets, candidate search, and sync/async orchestration.
+pai-sdk provides the pieces those runners need: stable target ids,
+contract-preserving candidate application, structured output, and replayable
+traces.
+
+For example, a GEPA `optimize_anything` script can choose to optimize the
+system instruction by sending only that template text as the candidate:
+
+```python
+from pai_sdk import apply_optimizer_target, system_instruction_target
+
+target = system_instruction_target(prompt, message_id="system")
+seed_candidate = next(message.template for message in prompt.messages if message.id == target.id)
+
+async def evaluate_candidate(candidate_text, example):
+    candidate_prompt = apply_optimizer_target(prompt, target, candidate_text)
+    traced = await candidate_prompt.generate_trace(example["inputs"], model=model)
+    return score(traced.output, example["expected"])
+
+# The external optimizer package calls evaluate_candidate for proposals.
+best_candidate = external_optimizer_result.best_candidate
+optimized_prompt = apply_optimizer_target(prompt, target, best_candidate)
+```
+
+The same pattern works for a subsection of a prompt, a user-message template,
+or a tool description. Prompt YAML does not need `optimize: true`; optimizer
+scripts decide which stable ids to target for each run.
+
+## Braintrust trace import
+
+`trace_from_braintrust_rows(...)` converts Braintrust SQL/export rows into a
+pai-sdk `Trace`. It understands common project-log fields like `id`,
+`root_span_id`, `span_attributes`, `input`, `output`, `metadata`, `scores`, and
+`metrics`. When `input` or `output` contains message-shaped data, the importer
+reconstructs `ModelMessage[]`; otherwise it preserves the raw input/output and
+Braintrust metadata for analysis.
+
+```python
+from pai_sdk import trace_from_braintrust_rows
+
+trace = trace_from_braintrust_rows(rows)
+span = trace.spans[0]
+
+span.messages
+span.usage
+span.metadata["braintrust"]["scores"]
+```
+
+This is intentionally best-effort. It is enough to turn an observed Braintrust
+run into pai-sdk's structured trace shape when the Braintrust row carries the
+rendered messages, and it still preserves useful metadata when privacy settings
+or application logging omit message content.
