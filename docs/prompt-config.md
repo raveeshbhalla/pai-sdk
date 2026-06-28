@@ -233,12 +233,16 @@ loaded = load_trace(dump_trace_json(traced.trace))
 rerun = await replay_span(loaded.spans[0], model=alternate_model)
 ```
 
-`span.messages` is the byte-faithful provider transcript for that span. The
-whole `Trace` is the replayable unit: imported traces may omit usage or some
+`span.messages` is the canonical replay transcript for that span: rendered
+input messages followed by assistant/tool/final response messages. The whole
+`Trace` is the replayable unit: imported traces may omit usage or some
 metadata, but should preserve span relationships, structured inputs/outputs,
 and provider-near messages when available. Semantic reruns with `replay_span`
 use `metadata.input_message_count` to send only the recorded input prefix; this
 boundary is recorded by pai-sdk trace helpers and can be provided by importers.
+For byte-faithful step auditing, pai-sdk generated traces also include
+`metadata.step_request_messages`, the effective `ModelMessage[]` sent to the
+provider for each step after `prepare_step` overrides.
 
 If generation fails after messages have been rendered, `generate_trace(...)`
 and `stream_trace(...)` attach a failed `Trace` to the original exception as

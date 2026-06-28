@@ -8,6 +8,7 @@ from pai_sdk import (
     load_messages,
     load_prompt,
     load_trace,
+    PrepareStepResult,
     ProviderResult,
     replay_span,
     Span,
@@ -75,6 +76,10 @@ async def test_prompt_generate_trace_builds_structured_span():
         "enum": ["low", "high"]
     }
     assert span.metadata["prompt"]["message_ids"] == ["system", "ticket"]
+    assert [message["role"] for message in span.metadata["step_request_messages"][0]] == [
+        "system",
+        "user",
+    ]
 
     dumped = span.to_dict()["messages"]
     assert load_messages(dumped)[0].content == "You triage tickets for Acme."
@@ -125,6 +130,40 @@ async def test_generate_trace_helper_captures_tool_messages_in_one_span():
 
     # The span carries the same replayable ModelMessage[] shape as the serializer.
     assert dump_messages(span.messages)[2]["content"][0]["toolName"] == "lookup"
+
+
+async def test_generate_trace_records_prepare_step_request_messages():
+    model = FakeModel(
+        steps=[
+            tool_step("lookup", tool_input={"q": "account"}),
+            text_step("done"),
+        ]
+    )
+
+    def prepare(*, step_number, **kwargs):
+        if step_number == 0:
+            return PrepareStepResult(messages=[{"role": "user", "content": "OVERRIDE"}])
+        return None
+
+    traced = await generate_trace(
+        model=model,
+        prompt="original",
+        tools={"lookup": tool(execute=lambda input: {"found": input["q"]})},
+        stop_when=step_count_is(5),
+        prepare_step=prepare,
+    )
+
+    [span] = traced.trace.spans
+    requests = span.metadata["step_request_messages"]
+    assert requests[0][0]["content"] == "OVERRIDE"
+    assert requests[1][0]["content"] == "original"
+    assert [message.role for message in span.messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert span.messages[0].content == "original"
 
 
 async def test_trace_dump_load_round_trips_usage_and_message_boundary():
@@ -300,6 +339,7 @@ async def test_stream_trace_captures_completed_stream():
     assert span.outputs["text"] == "streamed"
     assert span.usage.total_tokens == 15
     assert span.metadata["input_message_count"] == 1
+    assert span.metadata["step_request_messages"][0][0]["content"] == "stream please"
     assert [message.role for message in span.messages] == ["user", "assistant"]
 
 

@@ -202,6 +202,9 @@ def metadata_from_result(result: GenerateTextResult) -> dict[str, Any]:
         "finish_reason": result.finish_reason,
         "raw_finish_reason": result.raw_finish_reason,
         "step_finish_reasons": [step.finish_reason for step in result.steps],
+        "step_request_messages": [
+            dump_messages(step.request_messages) for step in result.steps
+        ],
         "warnings": list(result.warnings),
         "provider_metadata": result.provider_metadata,
     }
@@ -255,6 +258,9 @@ async def metadata_from_stream_result(result: Any) -> dict[str, Any]:
         "finish_reason": await result.finish_reason,
         "raw_finish_reason": final.raw_finish_reason if final is not None else None,
         "step_finish_reasons": [step.finish_reason for step in steps],
+        "step_request_messages": [
+            dump_messages(step.request_messages) for step in steps
+        ],
         "warnings": [warning for step in steps for warning in step.warnings],
         "provider_metadata": final.provider_metadata if final is not None else None,
     }

@@ -330,8 +330,10 @@ Why each exists:
 - **Trace helpers** — `generate_trace`/`stream_trace` join structured inputs,
   outputs, usage, metadata, and provider-near `ModelMessage[]` transcripts;
   `dump_trace`/`load_trace` round-trip the whole trace for replay and
-  observability imports. `trace_from_braintrust_rows` imports common Braintrust
-  project-log rows into the same shape when rows carry message-shaped inputs.
+  observability imports. Generated traces also record per-step provider request
+  messages after `prepare_step` overrides. `trace_from_braintrust_rows` imports
+  common Braintrust project-log rows into the same shape when rows carry
+  message-shaped inputs.
   
 
 ```python

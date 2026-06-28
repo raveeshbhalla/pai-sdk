@@ -35,10 +35,12 @@ Span = {
 provider-near information to recreate the key parts of an observed agent run.
 `Trace.id` is the root trace/span id. Root spans default `rootSpanId` to the
 trace id; child spans keep the same `rootSpanId` and set `parentSpanId`.
-Inside each span, `messages` is the byte-faithful provider transcript: system,
-user, assistant, tool-call, tool-result, and final assistant messages in order.
-Usage and metadata improve analysis, but may be optional when importing traces
-from external systems.
+Inside each span, `messages` is the canonical replay transcript: rendered
+inputs followed by assistant, tool-call, tool-result, and final assistant
+messages in order. When per-step hooks change what is sent to a provider,
+`metadata.step_request_messages` preserves those effective provider requests
+for byte-faithful auditing. Usage and metadata improve analysis, but may be
+optional when importing traces from external systems.
 
 Prompt hydration remains useful, but it is a supporting mechanism. The main
 proposal is not "structured messages" by themselves. The main proposal is a
@@ -467,6 +469,9 @@ The initial implementation adds:
 - `Trace` and `Span`
 - top-level prompt `input` schemas using the same shorthand/full-JSON-Schema
   forms as `output`
+- `StepResult.request_messages` and trace `metadata.step_request_messages` so
+  per-step provider requests remain auditable when `prepare_step` overrides the
+  effective message list
 - `Prompt.generate_trace(...)` and `Prompt.stream_trace(...)`
 - `generate_trace(...)` and `stream_trace(...)` helpers for plain prompt/message
   calls outside prompt configs
@@ -485,7 +490,9 @@ The initial implementation adds:
 Generated pai-sdk spans include `metadata.input_message_count`, which records
 the boundary between rendered inputs and generated response messages. That
 lets replay helpers rerun from the input prefix while the full `span.messages`
-continues to store the byte-faithful provider transcript.
+stores the canonical replay transcript. For byte-faithful step auditing,
+`metadata.step_request_messages` stores the effective `ModelMessage[]` sent to
+the provider for each step after `prepare_step` overrides.
 
 An external GEPA runner can read the selected system-instruction text with
 `read_optimizer_target(...)` and pass it as the `seed_candidate`, then
@@ -539,8 +546,6 @@ messages, but the trace span still stores the rendered messages.
 
 ## Open Questions
 
-- How should `prepare_step` message overrides be represented in the final
-  canonical message history?
 - Should child spans be emitted for each tool step, or is the flat
   `Span.messages` array sufficient for v1?
 - How should external observability imports map provider-specific span trees
