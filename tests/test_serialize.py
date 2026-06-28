@@ -84,7 +84,7 @@ async def test_replay_loaded_messages_through_generate_text():
 # subclass a message type, carry the template + variable bindings as real
 # fields, render `content` automatically. Flows through generate_text
 # unchanged (providers only read role/content) and round-trips through
-# dump/load with the structure intact — which is what a GEPA-style optimizer
+# dump/load with the structure intact — which is what an optimizer runner
 # needs to separate instructions from variables in traces.
 # ---------------------------------------------------------------------------
 
@@ -130,7 +130,7 @@ def test_typed_system_message_survives_trace_round_trip():
     assert restored[0].content.startswith("You answer questions about tax law")
     assert restored[0].model_dump()["template"] == msg.template
     # ...and the typed layer can re-validate into the typed class to mutate
-    # instructions and re-render (the GEPA loop):
+    # instructions and re-render:
     typed = TypedSystemMessage.model_validate(dumped[0])
     evolved = TypedSystemMessage(
         template=typed.template.replace("answer questions", "give expert answers"),

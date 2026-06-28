@@ -505,6 +505,7 @@ def _build_step_result(
     provider_metadata: Optional[dict[str, dict[str, Any]]],
     files: Optional[list[GeneratedFile]] = None,
     request: Any = None,
+    request_messages: Optional[list[ModelMessage]] = None,
 ) -> StepResult:
     text = "".join(p.text for p in content if isinstance(p, TextPart))
     reasoning = [p for p in content if isinstance(p, ReasoningPart)]
@@ -527,6 +528,7 @@ def _build_step_result(
         sources=_collect_sources(content),
         files=collected_files,
         request=request,
+        request_messages=list(request_messages or []),
     )
 
 
@@ -715,6 +717,7 @@ async def generate_text(
             warnings=result.warnings,
             provider_metadata=result.provider_metadata,
             request=result.request,
+            request_messages=cfg.messages,
         )
         steps.append(step)
         total_usage = total_usage + step.usage
@@ -1381,6 +1384,7 @@ def stream_text(
                 provider_metadata=provider_metadata,
                 files=step_files,
                 request=step_request,
+                request_messages=cfg.messages,
             )
             result.steps.append(step)
             result._total_usage = result._total_usage + usage

@@ -3,10 +3,10 @@
 A TypedSystemMessage/TypedUserMessage/TypedAssistantMessage carries:
 - `template`: text with Mustache-style `{{variable}}` placeholders
 - `variables`: the bindings used to render it
-- `optimize`: whether an optimizer (e.g. GEPA-style reflection) may rewrite
-  the template text. Variables are structurally untouchable: placeholders are
-  not part of the mutable text, and template mutations that change the
-  placeholder set are rejected (see prompts.Prompt.with_template).
+- `optimize`: legacy metadata for older prompt configs. New optimizer runners
+  choose targets at run time. Variables are structurally untouchable:
+  placeholders are not part of the mutable text, and template mutations that
+  change the placeholder set are rejected (see prompts.Prompt.with_template).
 
 `content` renders automatically on construction. Providers only ever read
 role/content, so these flow through generate_text unchanged; serialization
