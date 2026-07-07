@@ -94,12 +94,23 @@ provider-near transcript:
 wire-compatible with the TypeScript AI SDK, resendable verbatim (tool-call
 ids and reasoning signatures replay correctly). Three consequences:
 
-- **Rollouts are replayable.** `generate_trace()` returns a `Trace` whose
-  span joins the semantic row (`inputs`/`outputs`) with the full transcript
-  (`messages`). `replay_span()` reruns it from the recorded input prefix —
-  e.g. under a candidate prompt or model — and `span_feedback()` turns a
-  rollout into the diagnostic text a reflective optimizer reads (the
-  text-optimization analog of a gradient).
+- **Every call is traced — tracing is plumbing, not an API.** Connect a
+  sink once and every `generate_text`/`stream_text` call (including through
+  `Prompt`/`PromptSpec`) emits a `Trace` as a side effect, exactly like the
+  AI SDK's telemetry integrations — no separate call path, results stay
+  plain, failed calls emit too (and carry `exc.trace`):
+
+  ```python
+  from pai_sdk import configure_telemetry, otel_sink
+  configure_telemetry(otel_sink(my_exporter))   # once, at startup — that's it
+  result = await prompt.generate({...})          # plain result; trace emitted
+  ```
+
+  Each span joins the semantic row (`inputs`/`outputs`) with the full
+  transcript (`messages`). `replay_span()` reruns any span from its recorded
+  input prefix — e.g. under a candidate prompt or model — and
+  `span_feedback()` turns a rollout into the diagnostic text a reflective
+  optimizer reads (the text-optimization analog of a gradient).
 - **Provenance rides along.** Rendered messages are typed: each carries its
   `template`, bound `variables`, and message `id`, and every span records the
   document's `content_hash`. Every rollout is attributable to exactly the
@@ -127,14 +138,16 @@ feedback = span_feedback(span)                  # optimizer-readable diagnostics
   exports, and generic OpenLLMetry-style `gen_ai.*` spans import with usage
   and metadata preserved. You do not need to build a data pipeline before
   your first optimization run — the traffic you already log is the training
-  set.
+  set. (When you want a trace in-process — an optimizer evaluator, a test —
+  `generate_trace()`/`TraceCollector` return the same object connected sinks
+  receive; same pipeline, not a separate one.)
 
 ### The loop, end to end
 
 ```
   prompt document (JSON) ──render──▶ ModelMessage[] ──provider──▶ rollout
          ▲                                                           │
-         │ apply_candidate()                      generate_trace() / OTEL import
+         │ apply_candidate()                    telemetry sinks / OTEL import
          │ (contract-enforced)                                       ▼
   external optimizer ◀──── score + span_feedback() ◀────────── Trace / Span
   (GEPA optimize_anything, Orizu, ...)
@@ -485,7 +498,16 @@ Why each exists:
   
 - **Embeddings** — similarity for retrieval, dedup, or clustering eval data; same provider abstraction as text models.
   
-- **Trace helpers** — `generate_trace`/`stream_trace` join structured inputs,
+- **Telemetry** — `configure_telemetry(sink, ...)` (or the scoped
+  `telemetry(...)` context manager, or per-call `telemetry=`) makes every
+  `generate_text`/`stream_text` call emit a `Trace` to connected sinks:
+  `otel_sink(exporter)`, `jsonl_sink(path)`, `TraceCollector()`, or any
+  callable. Sinks are fire-and-forget — a raising sink never breaks
+  generation.
+
+- **Trace helpers** — `generate_trace`/`stream_trace` are the in-process
+  variants (they ride the telemetry pipeline and return the same trace the
+  sinks receive); both join structured inputs,
   outputs, usage, metadata, and provider-near `ModelMessage[]` transcripts;
   `dump_trace`/`load_trace` round-trip versioned `pai.trace.v1` wire data for replay and
   observability imports. Generated traces also record per-step provider request
@@ -775,4 +797,4 @@ await refresh_pricing("https://prices.internal/models.json", format="simple")
 
 The "simple" format for self-hosted tables is `{model_id: {"input": per_1M, "output": per_1M, "cache_read"?, "cache_write"?}}`. Or override individual models with `register_pricing` / pass `pricing=`. OpenRouter returns authoritative cost directly in `result.provider_metadata["openrouter"]["cost"]` — prefer that when available. Azure deployments have arbitrary names, so register pricing per deployment.
 ## Not (yet) implemented
-MCP tool loading, image/speech/transcription models, built-in telemetry exporters, and the tool-approval _flow_ (the message types exist; the loop doesn't pause on approvals yet).
+MCP tool loading, image/speech/transcription models, and the tool-approval _flow_ (the message types exist; the loop doesn't pause on approvals yet).
