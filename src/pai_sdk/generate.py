@@ -79,6 +79,10 @@ from .stream import (
 _SOURCE_TYPES = (UrlSourcePart, DocumentSourcePart)
 from .tools import Tool, ToolCallOptions, ToolSet, output_to_model_output
 from .transforms import Transform, compose_transforms
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .telemetry import TelemetryArg, TraceContext
 
 # ---------------------------------------------------------------------------
 # Stop conditions (AI SDK stopWhen)
@@ -582,7 +586,7 @@ async def _with_retry(
 # ---------------------------------------------------------------------------
 
 
-async def generate_text(
+async def _generate_text_impl(
     *,
     model: Union[str, LanguageModel],
     system: Optional[str] = None,
@@ -1127,7 +1131,7 @@ class StreamTextResult:
         return gen()
 
 
-def stream_text(
+def _stream_text_impl(
     *,
     model: Union[str, LanguageModel],
     system: Optional[str] = None,
@@ -1441,3 +1445,326 @@ def stream_text(
 def generate_id() -> str:
     """Generate a unique id (for tool calls etc.)."""
     return uuid.uuid4().hex
+
+
+# ---------------------------------------------------------------------------
+# Public entry points: telemetry-integrated wrappers
+# ---------------------------------------------------------------------------
+
+
+def _telemetry_inputs(ctx, system, prompt, input_messages):
+    if ctx.inputs is not None:
+        return ctx.inputs
+    from .trace import _default_inputs
+
+    return _default_inputs(
+        {"system": system, "prompt": prompt, "messages": input_messages},
+        input_messages,
+    )
+
+
+async def generate_text(
+    *,
+    model: Union[str, LanguageModel],
+    system: Optional[str] = None,
+    prompt: Prompt = None,
+    messages: Optional[Sequence[Any]] = None,
+    tools: Optional[ToolSet] = None,
+    tool_choice: Optional[ToolChoice] = None,
+    active_tools: Optional[Sequence[str]] = None,
+    max_output_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    stop_sequences: Optional[list[str]] = None,
+    seed: Optional[int] = None,
+    max_retries: int = 2,
+    headers: Optional[dict[str, str]] = None,
+    stop_when: Union[StopCondition, Sequence[StopCondition], None] = None,
+    provider_options: Optional[dict[str, dict[str, Any]]] = None,
+    output: Optional[Any] = None,
+    on_step_finish: Optional[Callable[[StepResult], Any]] = None,
+    prepare_step: Optional[PrepareStepFn] = None,
+    repair_tool_call: Optional[RepairToolCallFn] = None,
+    abort_signal: Optional[asyncio.Event] = None,
+    timeout: Union[float, int, dict, None] = None,
+    telemetry: "TelemetryArg" = None,
+    trace_context: Optional["TraceContext"] = None,
+) -> GenerateTextResult:
+    """Generate text (and tool calls) — the AI SDK generateText().
+
+    See `_generate_text_impl` for the full loop-control docs. Telemetry: when
+    trace sinks are connected (`configure_telemetry(...)`, the `telemetry()`
+    context manager, or a per-call `telemetry=` argument), the call emits a
+    replayable `Trace` as a side effect — success or failure (failed calls
+    also carry it as `exc.trace`). `telemetry=False` disables emission for
+    this call; `trace_context=` enriches the span with semantic
+    inputs/metadata and span relationships (Prompt.generate sets it
+    automatically).
+    """
+    from .telemetry import TraceContext, emit_trace, resolve_sinks
+
+    impl_kwargs = dict(
+        model=model,
+        system=system,
+        prompt=prompt,
+        messages=messages,
+        tools=tools,
+        tool_choice=tool_choice,
+        active_tools=active_tools,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        stop_sequences=stop_sequences,
+        seed=seed,
+        max_retries=max_retries,
+        headers=headers,
+        stop_when=stop_when,
+        provider_options=provider_options,
+        output=output,
+        on_step_finish=on_step_finish,
+        prepare_step=prepare_step,
+        repair_tool_call=repair_tool_call,
+        abort_signal=abort_signal,
+        timeout=timeout,
+    )
+    sinks = resolve_sinks(telemetry)
+    if not sinks:
+        return await _generate_text_impl(**impl_kwargs)
+
+    from .trace import build_failed_trace, build_trace
+
+    ctx = trace_context or TraceContext()
+    input_messages = list(
+        standardize_prompt(system=system, prompt=prompt, messages=messages)
+    )
+    inputs = _telemetry_inputs(ctx, system, prompt, input_messages)
+    try:
+        result = await _generate_text_impl(**impl_kwargs)
+    except BaseException as exc:
+        failed = build_failed_trace(
+            inputs=inputs,
+            input_messages=input_messages,
+            error=exc,
+            metadata=ctx.metadata,
+            trace_id=ctx.trace_id,
+            span_id=ctx.span_id,
+            root_span_id=ctx.root_span_id,
+            parent_span_id=ctx.parent_span_id,
+        )
+        await emit_trace(failed, sinks)
+        setattr(exc, "trace", failed)
+        raise
+    trace = build_trace(
+        inputs=inputs,
+        result=result,
+        input_messages=input_messages,
+        outputs=ctx.outputs,
+        metadata=ctx.metadata,
+        trace_id=ctx.trace_id,
+        span_id=ctx.span_id,
+        root_span_id=ctx.root_span_id,
+        parent_span_id=ctx.parent_span_id,
+    )
+    await emit_trace(trace, sinks)
+    return result
+
+
+def stream_text(
+    *,
+    model: Union[str, LanguageModel],
+    system: Optional[str] = None,
+    prompt: Prompt = None,
+    messages: Optional[Sequence[Any]] = None,
+    tools: Optional[ToolSet] = None,
+    tool_choice: Optional[ToolChoice] = None,
+    active_tools: Optional[Sequence[str]] = None,
+    max_output_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    stop_sequences: Optional[list[str]] = None,
+    seed: Optional[int] = None,
+    max_retries: int = 2,
+    headers: Optional[dict[str, str]] = None,
+    stop_when: Union[StopCondition, Sequence[StopCondition], None] = None,
+    provider_options: Optional[dict[str, dict[str, Any]]] = None,
+    output: Optional[Any] = None,
+    include_raw_chunks: bool = False,
+    on_chunk: Optional[Callable[[TextStreamPart], Any]] = None,
+    on_error: Optional[Callable[[Any], Any]] = None,
+    on_step_finish: Optional[Callable[[StepResult], Any]] = None,
+    on_finish: Optional[Callable[[StreamTextResult], Any]] = None,
+    on_abort: Optional[Callable[[StreamTextResult], Any]] = None,
+    prepare_step: Optional[PrepareStepFn] = None,
+    repair_tool_call: Optional[RepairToolCallFn] = None,
+    abort_signal: Optional[asyncio.Event] = None,
+    timeout: Union[float, int, dict, None] = None,
+    transform: Union[Transform, list, None] = None,
+    telemetry: "TelemetryArg" = None,
+    trace_context: Optional["TraceContext"] = None,
+) -> StreamTextResult:
+    """Stream text (and tool calls) — the AI SDK streamText().
+
+    See `_stream_text_impl` for the full streaming docs. Telemetry works like
+    generate_text: with sinks connected, a replayable `Trace` is emitted when
+    the stream finishes (or fails/aborts, as a failed-trace span).
+    """
+    from .telemetry import TraceContext, emit_trace, resolve_sinks
+
+    impl_kwargs = dict(
+        model=model,
+        system=system,
+        prompt=prompt,
+        messages=messages,
+        tools=tools,
+        tool_choice=tool_choice,
+        active_tools=active_tools,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        stop_sequences=stop_sequences,
+        seed=seed,
+        max_retries=max_retries,
+        headers=headers,
+        stop_when=stop_when,
+        provider_options=provider_options,
+        output=output,
+        include_raw_chunks=include_raw_chunks,
+        on_chunk=on_chunk,
+        on_error=on_error,
+        on_step_finish=on_step_finish,
+        on_finish=on_finish,
+        on_abort=on_abort,
+        prepare_step=prepare_step,
+        repair_tool_call=repair_tool_call,
+        abort_signal=abort_signal,
+        timeout=timeout,
+        transform=transform,
+    )
+    sinks = resolve_sinks(telemetry)
+    if not sinks:
+        return _stream_text_impl(**impl_kwargs)
+
+    from .serialize import dump_messages
+    from .trace import build_failed_trace, build_trace_from_messages
+
+    ctx = trace_context or TraceContext()
+    input_messages = list(
+        standardize_prompt(system=system, prompt=prompt, messages=messages)
+    )
+    inputs = _telemetry_inputs(ctx, system, prompt, input_messages)
+    holder: dict[str, StreamTextResult] = {}
+    user_on_finish = on_finish
+    user_on_error = on_error
+    user_on_abort = on_abort
+
+    async def _emit_success(result: StreamTextResult) -> None:
+        # Runs inside the stream's finish hook, i.e. within the drive task —
+        # the awaitable aggregates would deadlock here (they await that very
+        # task), so read the settled per-step state directly.
+        steps = result.steps
+        final = steps[-1] if steps else None
+        outputs = ctx.outputs
+        if outputs is None:
+            outputs = {
+                "text": final.text if final is not None else "",
+                "finish_reason": result._finish_reason,
+            }
+            if output is not None and final is not None:
+                try:
+                    outputs["object"] = output.parse(final.text)
+                except Exception:  # noqa: BLE001 — parse failure is not a
+                    pass           # telemetry failure; the caller sees it.
+            step_tool_calls = [c for st in steps for c in st.tool_calls]
+            step_tool_results = [r for st in steps for r in st.tool_results]
+            if step_tool_calls:
+                outputs["tool_calls"] = step_tool_calls
+            if step_tool_results:
+                outputs["tool_results"] = step_tool_results
+        response = final.response if final is not None else None
+        metadata = {
+            "response": {
+                "id": response.id if response is not None else None,
+                "model_id": response.model_id if response is not None else None,
+                "timestamp": response.timestamp if response is not None else None,
+                "headers": response.headers if response is not None else None,
+            },
+            "finish_reason": result._finish_reason,
+            "raw_finish_reason": final.raw_finish_reason if final is not None else None,
+            "step_finish_reasons": [st.finish_reason for st in steps],
+            "step_request_messages": [
+                dump_messages(st.request_messages) for st in steps
+            ],
+            "warnings": [w for st in steps for w in st.warnings],
+            "provider_metadata": final.provider_metadata if final is not None else None,
+            **ctx.metadata,
+        }
+        trace = build_trace_from_messages(
+            inputs=inputs,
+            input_messages=input_messages,
+            response_messages=list(result._generated_messages),
+            usage=result._total_usage,
+            outputs=outputs,
+            metadata=metadata,
+            trace_id=ctx.trace_id,
+            span_id=ctx.span_id,
+            root_span_id=ctx.root_span_id,
+            parent_span_id=ctx.parent_span_id,
+        )
+        await emit_trace(trace, sinks)
+
+    async def _emit_failure(error: BaseException) -> None:
+        result = holder.get("result")
+        failed = build_failed_trace(
+            inputs=inputs,
+            input_messages=input_messages,
+            error=error,
+            response_messages=list(getattr(result, "_generated_messages", []) or []),
+            usage=getattr(result, "_total_usage", None),
+            metadata=ctx.metadata,
+            trace_id=ctx.trace_id,
+            span_id=ctx.span_id,
+            root_span_id=ctx.root_span_id,
+            parent_span_id=ctx.parent_span_id,
+        )
+        await emit_trace(failed, sinks)
+
+    async def _finish_hook(result: StreamTextResult) -> None:
+        if user_on_finish is not None:
+            outcome = user_on_finish(result)
+            if asyncio.iscoroutine(outcome):
+                await outcome
+        await _emit_success(result)
+
+    async def _error_hook(error: Any) -> None:
+        if user_on_error is not None:
+            outcome = user_on_error(error)
+            if asyncio.iscoroutine(outcome):
+                await outcome
+        if isinstance(error, BaseException):
+            await _emit_failure(error)
+
+    async def _abort_hook(result: StreamTextResult) -> None:
+        if user_on_abort is not None:
+            outcome = user_on_abort(result)
+            if asyncio.iscoroutine(outcome):
+                await outcome
+        await _emit_failure(AbortError())
+
+    impl_kwargs["on_finish"] = _finish_hook
+    impl_kwargs["on_error"] = _error_hook
+    impl_kwargs["on_abort"] = _abort_hook
+    result = _stream_text_impl(**impl_kwargs)
+    holder["result"] = result
+    return result

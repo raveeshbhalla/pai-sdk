@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0 — 2026-07-07
+
+- **Integrated telemetry**: tracing is plumbing, not a separate API. Connect
+  sinks once (`configure_telemetry(...)`, scoped `telemetry(...)`, or
+  per-call `telemetry=`) and every `generate_text`/`stream_text` call emits a
+  replayable `Trace` — success, failure (also attached as `exc.trace`), and
+  streams on finish/error/abort. Prompt calls attach variables + prompt
+  identity automatically; raw calls can pass `trace_context=`. Built-in
+  sinks: `otel_sink(exporter)`, `jsonl_sink(path)`, `TraceCollector()`; any
+  callable works and sink errors never break generation.
+- `generate_trace`/`stream_trace` now ride the same pipeline as in-process
+  conveniences — the trace they return is the identical object connected
+  sinks receive (no double-build).
+
 ## 0.6.0 — 2026-07-07
 
 - **PromptSpec** (`prompt_spec`, `PromptSpec`, `BoundPrompt`): the typed code

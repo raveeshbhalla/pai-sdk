@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pai-sdk"
-version = "0.6.0"
+version = "0.7.0"
 description = "AI-SDK-style ModelMessage types, generate_text/stream_text, and prompt configs for Python — OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, Vertex, Azure."
 readme = "README.md"
 classifiers = [

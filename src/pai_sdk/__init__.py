@@ -125,6 +125,15 @@ from .optimization import (
 from .provider import CallOptions, FunctionToolSpec, LanguageModel, ProviderResult
 from .serialize import dump_messages, dump_messages_json, load_messages
 from .spec import BoundPrompt, PromptSpec, prompt_spec
+from .telemetry import (
+    TraceCollector,
+    TraceContext,
+    TraceSink,
+    configure_telemetry,
+    jsonl_sink,
+    otel_sink,
+    telemetry,
+)
 from .trace import (
     GenerateTraceResult,
     Span,
@@ -421,5 +430,12 @@ __all__ = [
     "read_candidate",
     "apply_candidate",
     "span_feedback",
+    "configure_telemetry",
+    "telemetry",
+    "TraceCollector",
+    "TraceContext",
+    "TraceSink",
+    "otel_sink",
+    "jsonl_sink",
     "system_instruction_target",
 ]
