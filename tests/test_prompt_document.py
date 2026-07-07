@@ -517,3 +517,138 @@ async def test_span_feedback_from_generated_trace():
 
     compact = span_feedback(result.trace.spans[0], include_transcript=False)
     assert "transcript" not in compact
+
+
+# ---------------------------------------------------------------------------
+# Security review regressions
+# ---------------------------------------------------------------------------
+
+
+def test_source_model_not_settable_from_documents():
+    benign = {"type": "object", "properties": {}, "additionalProperties": False}
+    hostile = {"type": "object", "properties": {"x": {"type": "string"}}}
+    with pytest.raises(Exception, match="code-only"):
+        load_prompt(
+            {
+                "name": "x",
+                "user": "hi",
+                "output": {"schema": benign, "source_model": hostile},
+            }
+        )
+    with pytest.raises(Exception, match="code-only"):
+        load_prompt(
+            {
+                "name": "x",
+                "user": "hi",
+                "input": {"schema": benign, "source_model": hostile},
+            }
+        )
+
+
+def test_bound_execute_not_settable_from_documents():
+    with pytest.raises(Exception, match="code-only"):
+        load_prompt(
+            {
+                "name": "x",
+                "user": "hi",
+                "tools": {
+                    "lookup": {"input": {"id": "string"}, "bound_execute": "anything"}
+                },
+            }
+        )
+
+
+def test_skill_names_are_fully_anchored():
+    with pytest.raises(Exception, match="Invalid skill name"):
+        load_prompt(
+            {
+                "name": "x",
+                "user": "hi",
+                "skills": {"esc\n": {"description": "d", "instructions": "i"}},
+            }
+        )
+
+
+def test_tool_schema_must_be_an_object():
+    with pytest.raises(Exception, match="must be an object"):
+        load_prompt(
+            {
+                "name": "x",
+                "user": "hi",
+                "tools": {"t": {"input": {"schema": "string"}}},
+            }
+        )
+    with pytest.raises(Exception, match="must be an object"):
+        load_prompt(
+            {
+                "name": "x",
+                "user": "hi",
+                "tools": {"t": {"output": {"schema": "string"}}},
+            }
+        )
+
+
+def test_skill_declaration_order_is_not_semantic():
+    base = {
+        "name": "x",
+        "system": "Base.",
+        "user": "Q: {{q}}",
+    }
+    ab = load_prompt({**base, "skills": {
+        "alpha": {"description": "a", "instructions": "A"},
+        "beta": {"description": "b", "instructions": "B"},
+    }})
+    ba = load_prompt({**base, "skills": {
+        "beta": {"description": "b", "instructions": "B"},
+        "alpha": {"description": "a", "instructions": "A"},
+    }})
+    assert ab.content_hash() == ba.content_hash()
+    render_ab = [(m.id, m.content) for m in ab.render({"q": "hi"})]
+    render_ba = [(m.id, m.content) for m in ba.render({"q": "hi"})]
+    assert render_ab == render_ba  # equal hash implies identical rendering
+    assert [m_id for m_id, _ in render_ab] == ["system", "skill:alpha", "skill:beta", "user"]
+
+
+def test_canonical_numbers_match_ecmascript():
+    assert canonical_prompt_json(
+        {"a": 0.00001, "b": 1e-7, "c": 1e21, "d": 1.0, "e": 123.456, "f": -0.0}
+    ) == '{"a":0.00001,"b":1e-7,"c":1000000000000000000000,"d":1,"e":123.456,"f":0}'
+
+
+def test_tool_fn_single_pydantic_param_gets_parsed_instance():
+    seen = []
+
+    def get_weather(req: WeatherInput) -> str:
+        seen.append(req)
+        return f"72F in {req.city}"
+
+    t = tool(get_weather, description="w")
+    assert t.input_schema is WeatherInput
+    parsed = t.parse_input({"city": "Oslo"})
+    assert isinstance(parsed, WeatherInput)
+
+
+def test_tool_fn_rejects_unsupported_signatures():
+    with pytest.raises(TypeError, match="positional-only"):
+        def pos_only(x: str, /) -> str:
+            return x
+        tool(pos_only)
+
+    with pytest.raises(TypeError, match="unbound method"):
+        class Svc:
+            def lookup(self, q: str) -> str:
+                return q
+        tool(Svc.lookup)
+
+
+def test_redact_trace_content_scrubs_headers():
+    from pai_sdk import redact_trace_content
+    from pai_sdk.trace import Span, Trace
+
+    span = Span(
+        id="s", root_span_id="s", inputs={}, outputs={},
+        messages=[],
+        metadata={"response": {"headers": {"set-cookie": "secret"}}},
+    )
+    redacted = redact_trace_content(Trace(id="s", spans=[span]))
+    assert redacted["spans"][0]["metadata"]["response"]["headers"] == {"redacted": True}

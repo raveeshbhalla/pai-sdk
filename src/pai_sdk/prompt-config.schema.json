@@ -208,7 +208,7 @@
     },
     "skills": {
       "type": "object",
-      "description": "Skills, keyed by name (letters, digits, '-', '_'). Each renders as a system message with id 'skill:<name>' after the last declared system message. description = when to apply (literal prose); instructions = how (template). Both are optimizer-addressable text; the name is the contract.",
+      "description": "Skills, keyed by name (letters, digits, '-', '_'; full match). Each renders as a system message with id 'skill:<name>' after the last declared system message, in code-point-sorted name order (key order is never semantic). description = when to apply (literal prose); instructions = how (template). Both are optimizer-addressable text; the name is the contract.",
       "propertyNames": {
         "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
       },

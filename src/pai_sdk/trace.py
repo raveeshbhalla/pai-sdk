@@ -452,6 +452,9 @@ def redact_trace_content(
         key = path[-1] if path else None
         if key in ("inputs", "outputs") and isinstance(value, dict):
             return {"redacted": True}
+        # Provider response headers can carry request-scoped tokens/cookies.
+        if key == "headers" and isinstance(value, dict):
+            return {"redacted": True}
         if key in sensitive_keys and isinstance(value, str):
             return replacement
         return value

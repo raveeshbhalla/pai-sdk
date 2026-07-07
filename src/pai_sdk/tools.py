@@ -164,16 +164,25 @@ def _input_model_from_function(fn: ExecuteFn) -> type[BaseModel]:
     except Exception:  # noqa: BLE001 — fall back to raw annotations
         hints = getattr(fn, "__annotations__", {})
     fields: dict[str, tuple[Any, Any]] = {}
+    label = getattr(fn, "__name__", fn)
     for param_name, param in inspect.signature(fn).parameters.items():
         if param_name == "self":
-            continue
+            raise TypeError(
+                f"Tool function '{label}' looks like an unbound method (first "
+                "parameter 'self'); pass a bound method or an instance's "
+                "function instead."
+            )
         if param.kind in (
             inspect.Parameter.VAR_POSITIONAL,
             inspect.Parameter.VAR_KEYWORD,
         ):
             raise TypeError(
-                f"Tool function '{getattr(fn, '__name__', fn)}' cannot use "
-                "*args or **kwargs."
+                f"Tool function '{label}' cannot use *args or **kwargs."
+            )
+        if param.kind is inspect.Parameter.POSITIONAL_ONLY:
+            raise TypeError(
+                f"Tool function '{label}' cannot use positional-only "
+                "parameters; inferred inputs are passed by keyword."
             )
         annotation = hints.get(param_name, Any)
         default = ... if param.default is inspect.Parameter.empty else param.default
@@ -184,6 +193,27 @@ def _input_model_from_function(fn: ExecuteFn) -> type[BaseModel]:
         __config__=ConfigDict(extra="forbid"),
         **fields,
     )
+
+
+def _single_model_param(fn: ExecuteFn) -> Optional[type[BaseModel]]:
+    """A single-parameter function annotated with a Pydantic model is the
+    AI-SDK-style form: the model IS the input schema and the function
+    receives the parsed instance."""
+    params = [
+        param
+        for name, param in inspect.signature(fn).parameters.items()
+        if name != "self"
+    ]
+    if len(params) != 1:
+        return None
+    try:
+        hints = get_type_hints(fn, include_extras=True)
+    except Exception:  # noqa: BLE001
+        hints = getattr(fn, "__annotations__", {})
+    annotation = hints.get(params[0].name)
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    return None
 
 
 def _tool_from_function(
@@ -203,8 +233,11 @@ def _tool_from_function(
             inspect.signature(fn).return_annotation
         )
 
-    if input_schema is not None:
-        # Explicit schema: single-argument convention, like execute=.
+    model_param = None if input_schema is not None else _single_model_param(fn)
+    if input_schema is not None or model_param is not None:
+        # Explicit schema, or a single Pydantic-model parameter: the function
+        # receives the parsed input directly (single-argument convention).
+        input_schema = input_schema if input_schema is not None else model_param
         execute = fn
     else:
         input_schema = _input_model_from_function(fn)

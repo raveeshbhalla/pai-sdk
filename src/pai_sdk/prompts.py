@@ -114,32 +114,75 @@ class PromptError(AISDKError):
     """Invalid prompt document or disallowed prompt mutation."""
 
 
-def _canonical_numbers(value: Any) -> Any:
-    # JavaScript has one number type: 1.0 serializes as "1". Match it so the
-    # same document hashes identically in both runtimes.
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
+def _js_float_repr(value: float) -> str:
+    """Format a non-integral float exactly like ECMAScript Number::toString.
+
+    Python's repr and JavaScript's String() both emit shortest-round-trip
+    digits, but they disagree on when to switch to exponent notation and how
+    to format the exponent ("1e-05" vs "1e-7"). Re-format Python's shortest
+    digits under the ECMAScript rules so both runtimes emit identical bytes.
+    """
+
+    from decimal import Decimal
+
+    sign = "-" if value < 0 else ""
+    _s, digit_tuple, exponent = Decimal(repr(abs(value))).as_tuple()
+    digit_list = list(digit_tuple)
+    while len(digit_list) > 1 and digit_list[-1] == 0:
+        digit_list.pop()
+        exponent += 1
+    digits = "".join(map(str, digit_list))
+    k = len(digits)
+    n = exponent + k  # value == 0.digits * 10**n
+    if k <= n <= 21:
+        return sign + digits + "0" * (n - k)
+    if 0 < n <= 21:
+        return sign + digits[:n] + "." + digits[n:]
+    if -6 < n <= 0:
+        return sign + "0." + "0" * (-n) + digits
+    e = n - 1
+    mantissa = digits[0] + ("." + digits[1:] if k > 1 else "")
+    return sign + mantissa + "e" + ("+" if e >= 0 else "-") + str(abs(e))
+
+
+def _canonical_fragment(value: Any) -> str:
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        # JavaScript has one number type: integral doubles print as integers
+        # (1.0 -> "1", 1e21 -> "1000000000000000000000").
+        if value.is_integer():
+            return str(int(value))
+        return _js_float_repr(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, dict):
-        return {key: _canonical_numbers(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_canonical_numbers(item) for item in value]
-    return value
+        items = sorted(value.items(), key=lambda item: item[0])
+        return "{" + ",".join(
+            f"{json.dumps(key, ensure_ascii=False)}:{_canonical_fragment(item)}"
+            for key, item in items
+        ) + "}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_canonical_fragment(item) for item in value) + "]"
+    raise PromptError(f"Value is not canonical-JSON serializable: {type(value).__name__}.")
 
 
 def canonical_prompt_json(config: dict[str, Any]) -> str:
     """The canonical JSON serialization used for `content_hash()`.
 
-    Sorted keys, compact separators, raw (non-ASCII-escaped) unicode, and
-    integral floats emitted as integers — specified so a TypeScript
-    implementation produces byte-identical output (see spec/README.md).
+    Sorted keys (by code point), compact separators, raw (non-ASCII-escaped)
+    unicode, and ECMAScript-compatible number formatting — specified so a
+    TypeScript implementation produces byte-identical output for every
+    document (see spec/README.md).
     """
 
-    return json.dumps(
-        _canonical_numbers(config),
-        sort_keys=True,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    return _canonical_fragment(config)
 
 
 class PromptMessage(BaseModel):
@@ -269,6 +312,18 @@ class PromptInput(BaseModel):
     # code. Never serialized — the document carries only plain JSON Schema.
     source_model: Optional[Any] = Field(default=None, exclude=True, repr=False)
 
+    @field_validator("source_model")
+    @classmethod
+    def _source_model_is_code_only(cls, value: Any) -> Any:
+        # A loaded document must not be able to smuggle in a second schema
+        # that to_dict()/content_hash() would never reveal.
+        if value is not None and not _is_model_class(value):
+            raise ValueError(
+                "source_model is code-only (a Pydantic model class); "
+                "documents must not set it."
+            )
+        return value
+
 
 class PromptOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -278,6 +333,16 @@ class PromptOutput(BaseModel):
     description: Optional[str] = None
     # As on PromptInput; when present, result.output parses into this class.
     source_model: Optional[Any] = Field(default=None, exclude=True, repr=False)
+
+    @field_validator("source_model")
+    @classmethod
+    def _source_model_is_code_only(cls, value: Any) -> Any:
+        if value is not None and not _is_model_class(value):
+            raise ValueError(
+                "source_model is code-only (a Pydantic model class); "
+                "documents must not set it."
+            )
+        return value
 
 
 class PromptTool(BaseModel):
@@ -305,6 +370,17 @@ class PromptTool(BaseModel):
     # document carries only the interface. Call-time handlers= win.
     bound_execute: Optional[Any] = Field(default=None, exclude=True, repr=False)
 
+    @field_validator("bound_execute")
+    @classmethod
+    def _bound_execute_is_code_only(cls, value: Any) -> Any:
+        # A loaded document must not be able to flip a client-side tool into
+        # a locally "executed" one.
+        if value is not None and not callable(value):
+            raise ValueError(
+                "bound_execute is code-only (a callable); documents must not set it."
+            )
+        return value
+
     @field_validator("input", "output", mode="before")
     @classmethod
     def _coerce_model_schema(cls, value: Any) -> Any:
@@ -321,20 +397,29 @@ class PromptTool(BaseModel):
         return self
 
     def input_schema(self) -> Optional[dict[str, Any]]:
-        if self.input is None:
-            return None
-        if "schema" in self.input:
-            return self.input["schema"]
-        return compile_input_shorthand(self.input)
+        return _tool_schema(self.input, label="input")
 
     def output_schema(self) -> Optional[dict[str, Any]]:
         """The declared result schema — interface documentation and typing
         data for consumers; not enforced against handler return values."""
-        if self.output is None:
-            return None
-        if "schema" in self.output:
-            return self.output["schema"]
-        return _compile_schema_shorthand(self.output, label="tool output")
+        return _tool_schema(self.output, label="tool output")
+
+
+def _tool_schema(
+    config: Optional[dict[str, Any]], *, label: str
+) -> Optional[dict[str, Any]]:
+    if config is None:
+        return None
+    if "schema" in config:
+        schema = config["schema"]
+        if not isinstance(schema, dict):
+            raise PromptError(
+                f"Tool {label} schema must be an object; got "
+                f"{type(schema).__name__}. (A shorthand field named 'schema' "
+                "needs the full JSON Schema form.)"
+            )
+        return schema
+    return _compile_schema_shorthand(config, label=label)
 
 
 ToolChoiceConfig = Union[Literal["auto", "none", "required"], dict[str, Any]]
@@ -457,7 +542,7 @@ class Prompt(BaseModel):
                 "A prompt needs messages — top-level system:/user: or a messages: list."
             )
         for name in self.skills:
-            if not _SKILL_NAME_PATTERN.match(name):
+            if not _SKILL_NAME_PATTERN.fullmatch(name):
                 raise ValueError(
                     f"Invalid skill name '{name}' (letters, digits, '-', '_' only)."
                 )
@@ -503,12 +588,16 @@ class Prompt(BaseModel):
         """Declared messages with skills rendered in as system messages.
 
         Skills follow the last declared system message (or lead when there is
-        none), in declaration order. This is the sequence render() produces.
+        none), in code-point-sorted name order — object key order is never
+        semantic in a document, and the canonical hash sorts keys, so
+        rendering must not depend on declaration order either. This is the
+        sequence render() produces.
         """
         if not self.skills:
             return list(self.messages)
         skill_messages = [
-            self._skill_message(name, skill) for name, skill in self.skills.items()
+            self._skill_message(name, self.skills[name])
+            for name in sorted(self.skills)
         ]
         last_system = next(
             (

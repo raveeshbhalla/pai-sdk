@@ -39,6 +39,18 @@ documents byte-for-byte.
 - The walked-back direction: no `Definition`/`Task`/`Signature` class DSL and
   no class-based `Tool` field markers. The document is the abstraction;
   Python sugar is Pydantic models + `tool(fn)`.
+- Security/robustness hardening from adversarial review (documents are
+  untrusted data): code-only fields (`source_model`, `bound_execute`) are
+  rejected when set from loaded documents (a document could previously
+  smuggle in a hash-invisible schema or flip a client-side tool); skill
+  names are full-matched (no trailing-newline id forgery); tool `schema:`
+  values must be objects (load-time error instead of call-time crash);
+  skills render in sorted-name order so equal hashes imply identical
+  rendering; canonical JSON numbers follow ECMAScript formatting for exact
+  cross-runtime hash parity; `redact_trace_content` scrubs provider response
+  headers; `tool(fn)` rejects unbound methods and positional-only params and
+  passes a parsed instance to single-Pydantic-parameter functions. Spec gains
+  a "Security considerations" section.
 
 ## 0.4.0 — 2026-06-11
 

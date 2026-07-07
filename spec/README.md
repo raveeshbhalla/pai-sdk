@@ -61,29 +61,34 @@ JSON with:
 - object keys sorted lexicographically (by unicode code point), recursively
 - separators `,` and `:` with no whitespace
 - non-ASCII characters emitted raw (no `\uXXXX` escaping)
-- integral floats emitted as integers (`1.0` -> `1`) — JavaScript has one
-  number type, so this is what `JSON.stringify` produces natively; Python
-  normalizes to match
-
-Python: `json.dumps(doc, sort_keys=True, ensure_ascii=False, separators=(",", ":"))`.
-TypeScript: recursive key-sort then `JSON.stringify` (which is compact and
-does not escape non-ASCII by default).
+- numbers in ECMAScript `Number::toString` format: integral values as plain
+  digits (`1.0` -> `1`, `1e21` -> `1000000000000000000000`), non-integral
+  values as shortest round-trip decimal with JavaScript's exponent rules
+  (`0.00001` -> `0.00001`, `1e-7` -> `1e-7`). JavaScript produces this
+  natively; Python re-formats its shortest digits under the same rules.
+  Integers outside ±2^53 are not interchange-safe (JSON parsers disagree on
+  their value) and must not appear in documents.
 
 Serialized form rules (what `to_dict()` emits):
 
 - `specVersion` always present
 - keys with `null`/absent values omitted
 - empty `params`, `tools`, `skills` omitted
-- shorthand schemas are preserved as written (they are NOT expanded to full
-  JSON Schema on serialization)
+- top-level `input`/`output` shorthand is compiled to full JSON Schema at
+  load and serialized in the compiled `{schema: {...}}` form; TOOL
+  `input`/`output` shorthand is preserved as written
 - simple-form `system:`/`user:` normalize into `messages` with ids
   `"system"` / `"user"` (the simple form is sugar; the serialized form is
   always the `messages` list)
+- object key order is never semantic: hashing sorts keys, and nothing may
+  render differently based on declaration order
 
 ## Template syntax
 
-Mustache-style `{{name}}` placeholders only; names must be identifiers.
-Whitespace inside the tag is allowed (`{{ name }}`). Format specs, dotted or
+Mustache-style `{{name}}` placeholders only; names must be unicode
+identifiers (XID_Start/`_` followed by XID_Continue — Python's
+`str.isidentifier()`). Whitespace inside the tag is allowed (`{{ name }}`)
+and is stripped using Python's whitespace set. Format specs, dotted or
 indexed access, and positional tags are load-time errors. Single braces are
 literal text (JSON examples need no escaping). A literal `{{` is written
 `\{{`; backslashes double in front of it. Rendering requires every
@@ -95,8 +100,10 @@ placeholder bound; extra variables are ignored; values are stringified.
 message's rendered text as `content` and (in trace-preserving runtimes) the
 `template`, bound `variables`, and `id` carried alongside.
 
-**Skills** render as system messages, in declaration order, inserted after the
-last declared system message (or before all messages when there is none). The
+**Skills** render as system messages, in code-point-sorted NAME order (never
+declaration order — key order is not semantic and the canonical hash sorts
+keys), inserted after the last declared system message (or before all
+messages when there is none). The
 rendered id is `skill:<name>` (message ids must not collide with these). The
 rendered template composes as:
 
@@ -167,3 +174,31 @@ A conforming runtime, for every fixture: loads `document` (or rejects each
 `invalid` entry), checks the `expect` fields, and for each case either renders
 messages whose `(role, id, content)` triples match exactly, or errors when
 `error` is true.
+
+## Security considerations
+
+Prompt documents are **data** and are routinely loaded from less-trusted
+places (repos, databases, hosted services). The contract:
+
+- Loading and rendering a document never executes code. Templates are plain
+  substitution — no expressions, no format specs, no eval.
+- Behavior binds only in code: tool handlers attach by name at call time
+  (`handlers=` / runtime `tool(fn)` values). Code-only fields
+  (`source_model`, `bound_execute` in pai-sdk) are rejected when a loaded
+  document tries to set them — a document must never be able to smuggle in a
+  schema or execution path that `to_dict()`/`content_hash()` would not
+  reveal.
+- Everything hash-relevant is in the serialized form: if two documents hash
+  equal, they render identically (skills render in sorted-name order for
+  exactly this reason).
+- Runtimes must use own-property lookups for document-controlled keys (tool
+  and skill names) — in JavaScript, `Object.hasOwn`, never `in` or truthiness
+  on prototype-bearing objects.
+- Skill names match `^[A-Za-z0-9][A-Za-z0-9_-]*$` anchored at BOTH ends
+  (full match, so trailing newlines cannot forge `skill:<name>` ids).
+- `load_prompt_url`/`loadPromptUrl` fetch whatever URL they are given; the
+  caller owns allow-listing. Hosted services should validate uploads against
+  the JSON Schema before serving them.
+- Traces contain rendered prompts, model output, and (in metadata) provider
+  response headers. Use `redact_trace(...)`/`redact_trace_content(...)`
+  before exporting traces to external systems.

@@ -188,7 +188,8 @@ structured extraction into two prompts there.
 A skill is a named, addressable block of model-facing prose: `description`
 says when it applies, `instructions` (a template) says how. Skills render as
 system messages with id `skill:<name>` after the last declared system
-message, in declaration order; instruction `{{variables}}` join the prompt's
+message, in code-point-sorted name order (key order is never semantic);
+instruction `{{variables}}` join the prompt's
 input contract:
 
 ```yaml
