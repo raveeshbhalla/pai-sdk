@@ -114,16 +114,31 @@ class PromptError(AISDKError):
     """Invalid prompt document or disallowed prompt mutation."""
 
 
+def _canonical_numbers(value: Any) -> Any:
+    # JavaScript has one number type: 1.0 serializes as "1". Match it so the
+    # same document hashes identically in both runtimes.
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, dict):
+        return {key: _canonical_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_canonical_numbers(item) for item in value]
+    return value
+
+
 def canonical_prompt_json(config: dict[str, Any]) -> str:
     """The canonical JSON serialization used for `content_hash()`.
 
-    Sorted keys, compact separators, and raw (non-ASCII-escaped) unicode —
-    specified so a TypeScript implementation produces byte-identical output
-    (see spec/README.md).
+    Sorted keys, compact separators, raw (non-ASCII-escaped) unicode, and
+    integral floats emitted as integers — specified so a TypeScript
+    implementation produces byte-identical output (see spec/README.md).
     """
 
     return json.dumps(
-        config, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+        _canonical_numbers(config),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
 
 

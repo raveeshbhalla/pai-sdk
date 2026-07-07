@@ -61,6 +61,9 @@ JSON with:
 - object keys sorted lexicographically (by unicode code point), recursively
 - separators `,` and `:` with no whitespace
 - non-ASCII characters emitted raw (no `\uXXXX` escaping)
+- integral floats emitted as integers (`1.0` -> `1`) — JavaScript has one
+  number type, so this is what `JSON.stringify` produces natively; Python
+  normalizes to match
 
 Python: `json.dumps(doc, sort_keys=True, ensure_ascii=False, separators=(",", ":"))`.
 TypeScript: recursive key-sort then `JSON.stringify` (which is compact and
