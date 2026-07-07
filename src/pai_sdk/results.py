@@ -191,6 +191,9 @@ class StepResult:
     sources: list[SourcePart] = field(default_factory=list)
     files: list[GeneratedFile] = field(default_factory=list)
     request: Any = None
+    # Effective ModelMessage[] sent to the provider for this step, after
+    # prepare_step overrides. Useful for byte-faithful trace/audit metadata.
+    request_messages: list[ModelMessage] = field(default_factory=list)
 
 
 @dataclass

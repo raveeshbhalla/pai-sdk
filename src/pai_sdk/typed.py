@@ -3,15 +3,17 @@
 A TypedSystemMessage/TypedUserMessage/TypedAssistantMessage carries:
 - `template`: text with Mustache-style `{{variable}}` placeholders
 - `variables`: the bindings used to render it
-- `optimize`: whether an optimizer (e.g. GEPA-style reflection) may rewrite
-  the template text. Variables are structurally untouchable: placeholders are
-  not part of the mutable text, and template mutations that change the
-  placeholder set are rejected (see prompts.Prompt.with_template).
+- `id`: the stable prompt-config message id that produced it
+
+Optimization intent is not message metadata: optimizer runs choose target ids
+at run time. Variables are structurally untouchable: placeholders are not part
+of the mutable text, and template mutations that change the placeholder set
+are rejected (see prompts.Prompt.with_template).
 
 `content` renders automatically on construction. Providers only ever read
 role/content, so these flow through generate_text unchanged; serialization
-(dump_messages) keeps template/variables/optimize alongside the rendered
-content, so traces stay structured and re-renderable.
+(dump_messages) keeps template/variables/id alongside the rendered content,
+so traces stay structured and re-renderable.
 
 Template syntax is deliberately minimal — plain `{{name}}` only (no format
 specs, no attribute/index access) — so the same templates render identically
@@ -171,7 +173,6 @@ class _TypedMixin:
 class TypedSystemMessage(_TypedMixin, SystemModelMessage):
     template: str
     variables: dict[str, Any] = Field(default_factory=dict)
-    optimize: bool = False
     id: Optional[str] = None
     content: str = ""
 
@@ -179,7 +180,6 @@ class TypedSystemMessage(_TypedMixin, SystemModelMessage):
 class TypedUserMessage(_TypedMixin, UserModelMessage):
     template: str
     variables: dict[str, Any] = Field(default_factory=dict)
-    optimize: bool = False
     id: Optional[str] = None
     content: str = ""  # type: ignore[assignment] — text-only in v1
 
@@ -189,7 +189,6 @@ class TypedAssistantMessage(_TypedMixin, AssistantModelMessage):
 
     template: str
     variables: dict[str, Any] = Field(default_factory=dict)
-    optimize: bool = False
     id: Optional[str] = None
     content: str = ""  # type: ignore[assignment]
 

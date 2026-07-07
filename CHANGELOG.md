@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.5.0 — 2026-07-06
+
+The portable prompt document. One versioned, JSON-Schema-validated document is
+now the source of truth for everything model-facing; code-first conveniences
+compile into it, and the TypeScript sibling (structured-ai-sdk) runs the same
+documents byte-for-byte.
+
+- `specVersion: pai.prompt.v1` on prompt documents — optional on input,
+  always emitted; unknown versions rejected. Canonical serialization and the
+  16-hex `content_hash()` algorithm are now specified cross-language
+  (`spec/README.md`); hashes use compact separators (existing hashes change).
+- **Skills**: `skills: {name: {description, instructions}}` — named,
+  addressable prose blocks that render as system messages (`skill:<name>`)
+  after the last declared system message. Instruction `{{variables}}` join
+  the input contract. `with_skill_description()` / `with_skill_instructions()`
+  mutations under the optimization contract.
+- **Tool output schemas**: `tools.<name>.output` (shorthand or full JSON
+  Schema) declared in documents and on `tool(..., output_schema=...)`.
+- **Pydantic models as schemas**: `input=`, `output=`, and tool
+  `input`/`output` accept `BaseModel` classes in code; they compile to plain
+  JSON Schema on `to_dict()`, and `result.output` parses into the class.
+- **`tool(fn, description=...)`**: code-first tool form — name and
+  input/output schemas inferred from the function signature.
+- **`render_message(id, vars)`**: render one document message (or
+  `skill:<name>`) for appending typed turns to an ongoing conversation.
+- **optimize_anything-shaped candidates**: target addresses (`message:<id>`,
+  `tool:<name>`, `skill:<name>.description|instructions`),
+  `read_candidate()` / `apply_candidate()` over `{address: text}` dicts, and
+  `span_feedback()` (trace -> diagnostic ASI text). GEPA/LiteLLM remain
+  external (`examples/gepa_optimize_anything.py`).
+- **Conformance fixtures** in `spec/conformance/` — the cross-language
+  contract structured-ai-sdk runs verbatim.
+- **Removed**: the legacy `optimize:` flags on messages and tools (and
+  `optimizable_messages()`/`optimizable_tools()`, the `optimize` field on
+  typed messages). Optimization intent lives in optimizer scripts, never in
+  documents. Documents using `optimize:` now fail validation — delete the key.
+- The walked-back direction: no `Definition`/`Task`/`Signature` class DSL and
+  no class-based `Tool` field markers. The document is the abstraction;
+  Python sugar is Pydantic models + `tool(fn)`.
+- Security/robustness hardening from adversarial review (documents are
+  untrusted data): code-only fields (`source_model`, `bound_execute`) are
+  rejected when set from loaded documents (a document could previously
+  smuggle in a hash-invisible schema or flip a client-side tool); skill
+  names are full-matched (no trailing-newline id forgery); tool `schema:`
+  values must be objects (load-time error instead of call-time crash);
+  skills render in sorted-name order so equal hashes imply identical
+  rendering; canonical JSON numbers follow ECMAScript formatting for exact
+  cross-runtime hash parity; `redact_trace_content` scrubs provider response
+  headers; `tool(fn)` rejects unbound methods and positional-only params and
+  passes a parsed instance to single-Pydantic-parameter functions. Spec gains
+  a "Security considerations" section.
+
 ## 0.4.0 — 2026-06-11
 
 - Tools in prompt configs: `tools:` (interface in data — description +

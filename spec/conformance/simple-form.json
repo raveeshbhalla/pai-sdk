@@ -1,0 +1,58 @@
+{
+  "description": "Simple form normalizes to messages with ids system/user; hash is over the normalized document.",
+  "document": {
+    "name": "support-triage",
+    "model": "anthropic/claude-haiku-4-5",
+    "params": {
+      "max_output_tokens": 500
+    },
+    "output": {
+      "urgency": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "summary": "string"
+    },
+    "system": "You triage support tickets for {{company}}. Be decisive.",
+    "user": "Ticket: {{ticket}}"
+  },
+  "expect": {
+    "variables": [
+      "company",
+      "ticket"
+    ],
+    "messageIds": [
+      "system",
+      "user"
+    ],
+    "contentHash": "d9346dd48a4cb389",
+    "roundTrip": true
+  },
+  "cases": [
+    {
+      "variables": {
+        "company": "Acme",
+        "ticket": "Login is broken"
+      },
+      "messages": [
+        {
+          "role": "system",
+          "id": "system",
+          "content": "You triage support tickets for Acme. Be decisive."
+        },
+        {
+          "role": "user",
+          "id": "user",
+          "content": "Ticket: Login is broken"
+        }
+      ]
+    },
+    {
+      "variables": {
+        "company": "Acme"
+      },
+      "error": true
+    }
+  ]
+}

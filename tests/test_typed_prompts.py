@@ -1,4 +1,4 @@
-"""Typed messages + Prompt configs (the GEPA substrate)."""
+"""Typed messages + Prompt configs for structured optimizer runners."""
 
 import json
 
@@ -93,14 +93,12 @@ def test_typed_message_renders_and_round_trips():
     msg = TypedSystemMessage(
         template="You help with {{topic}}.",
         variables={"topic": "taxes"},
-        optimize=True,
         id="instructions",
     )
     assert msg.content == "You help with taxes."
     dumped = dump_messages([msg])[0]
     assert dumped["template"] == "You help with {{topic}}."
     assert dumped["variables"] == {"topic": "taxes"}
-    assert dumped["optimize"] is True
     assert dumped["id"] == "instructions"
     # generic load keeps the fields; typed re-validation reconstructs the class
     restored = TypedSystemMessage.model_validate(dumped)
@@ -143,7 +141,6 @@ CONFIG = {
         {
             "id": "instructions",
             "role": "system",
-            "optimize": True,
             "template": "You triage tickets for {{company}}. Be decisive.",
         },
         {"id": "policy", "role": "system", "content": "Never reveal {internal} data."},
@@ -154,8 +151,12 @@ CONFIG = {
 
 def test_prompt_introspection():
     prompt = load_prompt(CONFIG)
+    assert prompt.spec_version == "pai.prompt.v1"
     assert prompt.variables == ["company", "ticket"]  # literal content excluded
-    assert [m.id for m in prompt.optimizable_messages()] == ["instructions"]
+    from pai_sdk import list_optimizer_targets
+
+    addresses = [t.address for t in list_optimizer_targets(prompt)]
+    assert "message:instructions" in addresses and "message:ticket" in addresses
     assert len(prompt.content_hash()) == 16
 
 
@@ -163,7 +164,7 @@ def test_prompt_render_produces_typed_messages():
     prompt = load_prompt(CONFIG)
     messages = prompt.render({"company": "Acme", "ticket": "It broke", "unused": 1})
     assert messages[0].content == "You triage tickets for Acme. Be decisive."
-    assert messages[0].optimize is True
+    assert messages[0].id == "instructions"
     assert messages[0].variables == {"company": "Acme"}  # only its own bindings
     assert messages[1].content == "Never reveal {internal} data."  # literal untouched
     assert messages[2].content == "Ticket: It broke"
@@ -263,10 +264,10 @@ def test_with_template_rejects_variable_changes():
         )
 
 
-def test_with_template_rejects_non_optimizable_and_unknown():
+def test_with_template_allows_optimizer_selected_message_and_rejects_unknown():
     prompt = load_prompt(CONFIG)
-    with pytest.raises(PromptError, match="not marked optimize"):
-        prompt.with_template("ticket", "Changed: {{ticket}}")
+    evolved = prompt.with_template("ticket", "Changed: {{ticket}}")
+    assert evolved.messages[2].template == "Changed: {{ticket}}"
     with pytest.raises(PromptError, match="No message with id"):
         prompt.with_template("nope", "x")
 
@@ -313,12 +314,12 @@ def test_config_validation_errors():
 
 
 # ---------------------------------------------------------------------------
-# Live: YAML prompt -> structured output -> mutate -> re-run (the GEPA loop)
+# Live: YAML prompt -> structured output -> mutate -> re-run.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.live
-async def test_prompt_config_live_gepa_loop(tmp_path):
+async def test_prompt_config_live_optimizer_loop(tmp_path):
     import os
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -344,7 +345,6 @@ async def test_prompt_config_live_gepa_loop(tmp_path):
             {
                 "id": "instructions",
                 "role": "system",
-                "optimize": True,
                 "template": "Classify the sentiment of {{kind}} feedback.",
             },
             {"id": "input", "role": "user", "template": "Feedback: {{text}}"},
@@ -377,7 +377,7 @@ async def test_prompt_config_live_gepa_loop(tmp_path):
 # Simple-form configs (top-level system/user, output type shorthand)
 # ---------------------------------------------------------------------------
 
-from pai_sdk.prompts import compile_output_shorthand  # noqa: E402
+from pai_sdk.prompts import compile_input_shorthand, compile_output_shorthand  # noqa: E402
 
 
 def test_output_shorthand_compiles():
@@ -406,6 +406,92 @@ def test_output_shorthand_compiles():
         compile_output_shorthand({"x": "strang"})
 
 
+def test_input_shorthand_compiles_and_validates_prompt_inputs():
+    schema = compile_input_shorthand(
+        {
+            "company": "string",
+            "ticket": "string",
+            "tenant_id": "string",
+            "context": {"plan": "string"},
+        }
+    )
+    assert schema["required"] == ["company", "ticket", "tenant_id", "context"]
+    assert schema["properties"]["context"]["properties"]["plan"] == {"type": "string"}
+
+    prompt = load_prompt(
+        {
+            "name": "input-signature",
+            "input": {
+                "company": "string",
+                "ticket": "string",
+                "tenant_id": "string",
+            },
+            "system": "You support {{company}}.",
+            "user": "Ticket: {{ticket}}",
+        }
+    )
+
+    assert prompt.input_schema()["required"] == ["company", "ticket", "tenant_id"]
+    prompt.render({"company": "Acme", "ticket": "Login", "tenant_id": "t_1"})
+    with pytest.raises(PromptError, match="tenant_id"):
+        prompt.render({"company": "Acme", "ticket": "Login"})
+    with pytest.raises(PromptError, match="unknown input fields"):
+        prompt.render(
+            {
+                "company": "Acme",
+                "ticket": "Login",
+                "tenant_id": "t_1",
+                "unused": "extra",
+            }
+        )
+
+
+def test_full_input_schema_supports_optional_fields():
+    prompt = load_prompt(
+        {
+            "name": "optional-inputs",
+            "input": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "company": {"type": "string"},
+                        "ticket": {"type": "string"},
+                        "customer_context": {"type": "string"},
+                    },
+                    "required": ["company", "ticket"],
+                    "additionalProperties": False,
+                },
+                "description": "Input row for support triage.",
+            },
+            "system": "You support {{company}}.",
+            "user": "Ticket: {{ticket}}",
+        }
+    )
+
+    prompt.render({"company": "Acme", "ticket": "Login"})
+    prompt.render(
+        {
+            "company": "Acme",
+            "ticket": "Login",
+            "customer_context": "Enterprise customer.",
+        }
+    )
+    with pytest.raises(PromptError, match="unknown input fields"):
+        prompt.render({"company": "Acme", "ticket": "Login", "unknown": "x"})
+
+
+def test_input_schema_must_declare_template_variables():
+    with pytest.raises(Exception, match="declare template variables: company"):
+        load_prompt(
+            {
+                "name": "bad-input-signature",
+                "input": {"ticket": "string"},
+                "system": "You support {{company}}.",
+                "user": "Ticket: {{ticket}}",
+            }
+        )
+
+
 def test_simple_form_config():
     prompt = load_prompt(
         {
@@ -416,29 +502,27 @@ def test_simple_form_config():
             "user": "Ticket: {{ticket}}",
         }
     )
-    # system/user become messages; system is optimizable by default
+    # system/user become addressable messages
     assert [m.id for m in prompt.messages] == ["system", "user"]
-    assert prompt.messages[0].optimize is True
-    assert prompt.messages[1].optimize is False
     # output shorthand compiled to a strict JSON Schema
     assert prompt.output.schema_["properties"]["urgency"] == {"enum": ["low", "high"]}
     assert prompt.output.schema_["additionalProperties"] is False
-    # the optimization contract works on the simple form
+    # optimizer-selected targets can be rewritten when variables are preserved
     evolved = prompt.with_template("system", "Best triager for {{company}} ever.")
     assert "Best triager" in evolved.messages[0].template
-    with pytest.raises(PromptError, match="not marked optimize"):
-        prompt.with_template("user", "changed {{ticket}}")
+    evolved = prompt.with_template("user", "Changed: {{ticket}}")
+    assert evolved.messages[1].template == "Changed: {{ticket}}"
 
 
 def test_simple_form_dict_control_and_conflicts():
     prompt = load_prompt(
         {
             "name": "x",
-            "system": {"template": "Frozen {{a}}.", "optimize": False},
+            "system": {"template": "Frozen {{a}}.", "id": "frozen"},
             "user": "Q: {{q}}",
         }
     )
-    assert prompt.messages[0].optimize is False
+    assert prompt.messages[0].id == "frozen"
     with pytest.raises(Exception, match="not both"):
         load_prompt(
             {
@@ -493,6 +577,7 @@ SIMPLE_FORM = {
     "name": "triage",
     "model": "anthropic/claude-haiku-4-5",
     "params": {"max_output_tokens": 500},
+    "input": {"company": "string", "ticket": "string"},
     "output": {"urgency": ["low", "high"], "tags": "string[]", "user": {"id": "integer"}},
     "system": "You triage tickets for {{company}}.",
     "user": "Ticket: {{ticket}}",
@@ -514,8 +599,16 @@ def test_schema_accepts_what_loader_accepts():
     assert _validates(
         {
             "name": "x",
+            "input": {
+                "schema": {
+                    "type": "object",
+                    "properties": {"a": {"type": "string"}, "optional": {"type": "string"}},
+                    "required": ["a"],
+                    "additionalProperties": False,
+                }
+            },
             "output": {"schema": {"type": "object", "properties": {}}},
-            "system": {"template": "Hi {{a}}", "optimize": False},
+            "system": {"template": "Hi {{a}}"},
         }
     )
     # and the loader agrees on all three
@@ -531,6 +624,7 @@ def test_schema_rejects_what_loader_rejects():
             {"role": "user", "template": "a", "content": "b"}  # both bodies
         ]},
         {"name": "x", "output": {"urgency": "strang"}, "system": "s"},  # bad type
+        {"name": "x", "input": {"query": "strang"}, "system": "{{query}}"},  # bad input type
         {"messages": [{"role": "user", "content": "hi"}]},  # missing name
     ]
     for config in bad_configs:
@@ -543,7 +637,7 @@ def test_schema_file_ships_with_package():
     from pai_sdk.prompts import PROMPT_CONFIG_SCHEMA_PATH
 
     assert PROMPT_CONFIG_SCHEMA_PATH.exists()
-    assert PROMPT_CONFIG_SCHEMA["title"] == "pai-sdk prompt config"
+    assert PROMPT_CONFIG_SCHEMA["title"] == "pai prompt document"
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +652,6 @@ TOOL_CONFIG = {
     "tools": {
         "get_weather": {
             "description": "Get current weather. Call when asked about conditions.",
-            "optimize": True,
             "input": {"city": "string"},
         },
         "search_docs": {
@@ -579,8 +672,7 @@ def test_prompt_tool_parsing_and_schemas():
     assert weather.input_schema()["additionalProperties"] is False
     docs = prompt.tools["search_docs"]
     assert docs.input_schema()["properties"]["query"] == {"type": "string"}  # full-schema form
-    assert [*prompt.optimizable_tools()] == ["get_weather"]
-    with pytest.raises(Exception, match="Unknown output field type"):
+    with pytest.raises(Exception, match="Unknown input field type"):
         load_prompt({**TOOL_CONFIG, "tools": {"x": {"input": {"a": "strang"}}}})
 
 
@@ -645,8 +737,8 @@ def test_with_tool_description_contract():
     assert evolved.content_hash() != prompt.content_hash()
     # schema/name unchanged by construction
     assert evolved.tools["get_weather"].input_schema() == prompt.tools["get_weather"].input_schema()
-    with pytest.raises(PromptError, match="not marked optimize"):
-        prompt.with_tool_description("search_docs", "x")
+    evolved_docs = prompt.with_tool_description("search_docs", "Search docs before answering.")
+    assert evolved_docs.tools["search_docs"].description == "Search docs before answering."
     with pytest.raises(PromptError, match="No tool named"):
         prompt.with_tool_description("nope", "x")
 
@@ -695,7 +787,6 @@ async def test_prompt_config_tool_loop_live():
                 "get_weather": {
                     "description": "Get the current weather for a city. "
                     "Call whenever asked about weather conditions.",
-                    "optimize": True,
                     "input": {"city": "string"},
                 }
             },

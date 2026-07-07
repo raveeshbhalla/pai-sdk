@@ -4,15 +4,20 @@ A tool's input schema can be a JSON Schema dict or a Pydantic model class
 (the Pydantic class plays the role Zod plays in TypeScript: it both produces
 the JSON schema sent to the provider and validates/parses the model's input
 before `execute` runs).
+
+`tool(fn, description=...)` is the code-first shorthand: the tool name and
+input/output schemas are inferred from the function signature and compile to
+the same plain JSON Schema that prompt configs carry — the description stays
+explicit because it is prompt text.
 """
 
 from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Optional, Union
+from typing import Any, Awaitable, Callable, Optional, Union, get_type_hints
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field as PydanticField, TypeAdapter, create_model
 
 from .errors import InvalidToolInputError
 from .messages import (
@@ -25,6 +30,7 @@ from .messages import (
 )
 
 InputSchema = Union[dict[str, Any], type[BaseModel], None]
+OutputSchema = Union[dict[str, Any], type[BaseModel], None]
 ExecuteFn = Callable[..., Union[Any, Awaitable[Any]]]
 
 
@@ -39,6 +45,7 @@ class Tool:
 
     description: Optional[str] = None
     input_schema: InputSchema = None
+    output_schema: OutputSchema = None
     execute: Optional[ExecuteFn] = None
     to_model_output: Optional[Callable[[Any], ToolResultOutput]] = None
     strict: Optional[bool] = None
@@ -53,6 +60,18 @@ class Tool:
         if isinstance(self.input_schema, dict):
             return self.input_schema
         return self.input_schema.model_json_schema()
+
+    def output_json_schema(self) -> Optional[dict[str, Any]]:
+        """The declared JSON Schema for this tool's result, if any.
+
+        Output schemas are interface documentation (and prompt-config data);
+        they are not enforced against `execute` return values at run time.
+        """
+        if self.output_schema is None:
+            return None
+        if isinstance(self.output_schema, dict):
+            return self.output_schema
+        return self.output_schema.model_json_schema()
 
     def parse_input(self, raw_input: Any) -> Any:
         """Validate raw model input. Returns a Pydantic instance when the
@@ -87,22 +106,159 @@ class ToolCallOptions:
 
 
 def tool(
+    func: Optional[ExecuteFn] = None,
+    /,
     *,
     description: Optional[str] = None,
     input_schema: InputSchema = None,
+    output_schema: OutputSchema = None,
     execute: Optional[ExecuteFn] = None,
     to_model_output: Optional[Callable[[Any], ToolResultOutput]] = None,
     strict: Optional[bool] = None,
     provider_options: Optional[dict[str, dict[str, Any]]] = None,
 ) -> Tool:
-    """Define a tool (mirrors the AI SDK `tool()` helper)."""
+    """Define a tool.
+
+    `tool(description=..., input_schema=..., execute=...)` mirrors the AI SDK
+    helper. `tool(fn, description=...)` is the code-first shorthand: the name
+    comes from the function, and the input/output schemas are inferred from
+    its signature (and compiled to plain JSON Schema when serialized into a
+    prompt config). The description stays explicit — it is prompt text.
+    """
+    if func is not None:
+        if execute is not None:
+            raise TypeError("Pass either a function or execute=, not both.")
+        return _tool_from_function(
+            func,
+            description=description,
+            input_schema=input_schema,
+            output_schema=output_schema,
+            to_model_output=to_model_output,
+            strict=strict,
+            provider_options=provider_options,
+        )
     return Tool(
         description=description,
         input_schema=input_schema,
+        output_schema=output_schema,
         execute=execute,
         to_model_output=to_model_output,
         strict=strict,
         provider_options=provider_options,
+    )
+
+
+def _schema_from_annotation(annotation: Any) -> Optional[dict[str, Any]]:
+    if annotation is inspect.Signature.empty:
+        return None
+    if annotation is None:
+        return {"type": "null"}
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation.model_json_schema()
+    return TypeAdapter(annotation).json_schema()
+
+
+def _input_model_from_function(fn: ExecuteFn) -> type[BaseModel]:
+    try:
+        hints = get_type_hints(fn, include_extras=True)
+    except Exception:  # noqa: BLE001 — fall back to raw annotations
+        hints = getattr(fn, "__annotations__", {})
+    fields: dict[str, tuple[Any, Any]] = {}
+    label = getattr(fn, "__name__", fn)
+    for param_name, param in inspect.signature(fn).parameters.items():
+        if param_name == "self":
+            raise TypeError(
+                f"Tool function '{label}' looks like an unbound method (first "
+                "parameter 'self'); pass a bound method or an instance's "
+                "function instead."
+            )
+        if param.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            raise TypeError(
+                f"Tool function '{label}' cannot use *args or **kwargs."
+            )
+        if param.kind is inspect.Parameter.POSITIONAL_ONLY:
+            raise TypeError(
+                f"Tool function '{label}' cannot use positional-only "
+                "parameters; inferred inputs are passed by keyword."
+            )
+        annotation = hints.get(param_name, Any)
+        default = ... if param.default is inspect.Parameter.empty else param.default
+        fields[param_name] = (annotation, PydanticField(default))
+    name = getattr(fn, "__name__", "tool")
+    return create_model(
+        f"{name}_input",
+        __config__=ConfigDict(extra="forbid"),
+        **fields,
+    )
+
+
+def _single_model_param(fn: ExecuteFn) -> Optional[type[BaseModel]]:
+    """A single-parameter function annotated with a Pydantic model is the
+    AI-SDK-style form: the model IS the input schema and the function
+    receives the parsed instance."""
+    params = [
+        param
+        for name, param in inspect.signature(fn).parameters.items()
+        if name != "self"
+    ]
+    if len(params) != 1:
+        return None
+    try:
+        hints = get_type_hints(fn, include_extras=True)
+    except Exception:  # noqa: BLE001
+        hints = getattr(fn, "__annotations__", {})
+    annotation = hints.get(params[0].name)
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    return None
+
+
+def _tool_from_function(
+    fn: ExecuteFn,
+    *,
+    description: Optional[str],
+    input_schema: InputSchema,
+    output_schema: OutputSchema,
+    to_model_output: Optional[Callable[[Any], ToolResultOutput]],
+    strict: Optional[bool],
+    provider_options: Optional[dict[str, dict[str, Any]]],
+) -> Tool:
+    if not callable(fn):
+        raise TypeError("tool(...) expects a callable.")
+    if output_schema is None:
+        output_schema = _schema_from_annotation(
+            inspect.signature(fn).return_annotation
+        )
+
+    model_param = None if input_schema is not None else _single_model_param(fn)
+    if input_schema is not None or model_param is not None:
+        # Explicit schema, or a single Pydantic-model parameter: the function
+        # receives the parsed input directly (single-argument convention).
+        input_schema = input_schema if input_schema is not None else model_param
+        execute = fn
+    else:
+        input_schema = _input_model_from_function(fn)
+
+        def execute(parsed_input: Any) -> Any:
+            data = (
+                parsed_input.model_dump(mode="python")
+                if isinstance(parsed_input, BaseModel)
+                else dict(parsed_input or {})
+            )
+            return fn(**data)
+
+    return Tool(
+        description=description,
+        input_schema=input_schema,
+        output_schema=output_schema,
+        execute=execute,
+        to_model_output=to_model_output,
+        strict=strict,
+        provider_options=provider_options,
+        name=getattr(fn, "__name__", None),
     )
 
 

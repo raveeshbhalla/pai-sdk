@@ -1,0 +1,124 @@
+{
+  "description": "General form with input schema, structured output, tools with input+output schemas, and skills. Skills render after the last system message with composed templates.",
+  "document": {
+    "specVersion": "pai.prompt.v1",
+    "name": "support-agent",
+    "version": 2,
+    "model": "openai/gpt-5.4-mini",
+    "input": {
+      "company": "string",
+      "ticket": "string",
+      "customer_name": "string"
+    },
+    "output": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "reply": {
+            "type": "string"
+          },
+          "escalate": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reply",
+          "escalate"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "tools": {
+      "lookup_customer": {
+        "description": "Look up the customer record before answering account questions.",
+        "input": {
+          "customer_name": "string"
+        },
+        "output": {
+          "plan": "string",
+          "arr": "number"
+        }
+      }
+    },
+    "tool_choice": "auto",
+    "max_steps": 4,
+    "messages": [
+      {
+        "id": "instructions",
+        "role": "system",
+        "template": "You are the support agent for {{company}}."
+      },
+      {
+        "id": "policy",
+        "role": "system",
+        "content": "Never reveal {internal} data."
+      },
+      {
+        "id": "ticket",
+        "role": "user",
+        "template": "{{customer_name}} writes: {{ticket}}"
+      }
+    ],
+    "skills": {
+      "refunds": {
+        "description": "Apply when the customer asks for money back.",
+        "instructions": "Refund within {{company}} policy limits; escalate above them."
+      }
+    }
+  },
+  "expect": {
+    "variables": [
+      "company",
+      "customer_name",
+      "ticket"
+    ],
+    "messageIds": [
+      "instructions",
+      "policy",
+      "skill:refunds",
+      "ticket"
+    ],
+    "contentHash": "6b6dceca8d3accbb",
+    "roundTrip": true
+  },
+  "cases": [
+    {
+      "variables": {
+        "company": "Acme",
+        "ticket": "I want my money back.",
+        "customer_name": "Jane"
+      },
+      "messages": [
+        {
+          "role": "system",
+          "id": "instructions",
+          "content": "You are the support agent for Acme."
+        },
+        {
+          "role": "system",
+          "id": "policy",
+          "content": "Never reveal {internal} data."
+        },
+        {
+          "role": "system",
+          "id": "skill:refunds",
+          "content": "Skill: refunds\nApply when the customer asks for money back.\n\nRefund within Acme policy limits; escalate above them."
+        },
+        {
+          "role": "user",
+          "id": "ticket",
+          "content": "Jane writes: I want my money back."
+        }
+      ]
+    },
+    {
+      "variables": {
+        "company": "Acme",
+        "ticket": "hi",
+        "customer_name": "Jane",
+        "unknown_field": true
+      },
+      "error": true
+    }
+  ]
+}

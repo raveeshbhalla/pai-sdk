@@ -1,0 +1,36 @@
+{
+  "description": "Number canonicalization parity: integral floats as digits, ECMAScript exponent rules, so hashes match across runtimes.",
+  "document": {
+    "name": "numbers",
+    "params": {
+      "temperature": 1.0,
+      "top_p": 1e-05,
+      "frequency_penalty": 123.456,
+      "presence_penalty": 1e-07,
+      "seed": 42,
+      "custom_threshold": 1e+21
+    },
+    "user": "Count to {{n}}."
+  },
+  "expect": {
+    "variables": [
+      "n"
+    ],
+    "contentHash": "13ffefdeec893343",
+    "roundTrip": true
+  },
+  "cases": [
+    {
+      "variables": {
+        "n": 3
+      },
+      "messages": [
+        {
+          "role": "user",
+          "id": "user",
+          "content": "Count to 3."
+        }
+      ]
+    }
+  ]
+}

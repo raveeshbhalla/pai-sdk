@@ -1,0 +1,43 @@
+{
+  "description": "Documents every conforming runtime must reject at load time.",
+  "invalid": [
+    { "name": "no-messages" },
+    { "name": "x", "messages": [{ "role": "user" }] },
+    {
+      "name": "x",
+      "messages": [{ "role": "user", "template": "a", "content": "b" }]
+    },
+    {
+      "name": "x",
+      "messages": [
+        { "id": "a", "role": "user", "content": "1" },
+        { "id": "a", "role": "user", "content": "2" }
+      ]
+    },
+    { "name": "x", "system": "s", "messages": [{ "role": "user", "content": "u" }] },
+    { "name": "x", "user": "{{a.b}}" },
+    { "name": "x", "user": "{{0}}" },
+    { "name": "x", "user": "{{unclosed" },
+    { "name": "x", "output": { "urgency": "strang" }, "user": "u" },
+    { "name": "x", "input": { "q": "string" }, "user": "Q: {{other}}" },
+    { "name": "x", "specVersion": "pai.prompt.v2", "user": "u" },
+    {
+      "name": "x",
+      "user": "u",
+      "skills": { "bad name!": { "description": "d", "instructions": "i" } }
+    },
+    {
+      "name": "x",
+      "user": "u",
+      "skills": { "s": { "description": "d" } }
+    },
+    {
+      "name": "x",
+      "messages": [
+        { "id": "skill:s", "role": "system", "content": "collides" },
+        { "id": "u", "role": "user", "content": "hi" }
+      ],
+      "skills": { "s": { "description": "d", "instructions": "i" } }
+    }
+  ]
+}
