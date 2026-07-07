@@ -267,10 +267,36 @@ instructions and which bindings produced every call. New optimizer runs should
 choose target ids in the optimizer script rather than encoding optimization
 intent in the prompt config.
 
-## Trace-backed generation
+## Telemetry: every call emits
+
+Tracing is plumbing, not a separate API. Connect sinks once and every
+`generate_text`/`stream_text` call — including `prompt.generate` and bound
+`PromptSpec` prompts — emits a replayable `Trace`:
+
+```python
+from pai_sdk import TraceCollector, configure_telemetry, jsonl_sink, otel_sink, telemetry
+
+configure_telemetry(otel_sink(exporter), jsonl_sink("traces.jsonl"))  # global
+
+collector = TraceCollector()
+with telemetry(collector):                                            # scoped
+    ...
+await generate_text(..., telemetry=extra_sink)      # per-call add
+await generate_text(..., telemetry=False)           # per-call opt-out
+```
+
+Prompt calls attach the semantic context automatically (variables as
+`span.inputs`, prompt name/hash/ids in metadata); raw calls can pass
+`trace_context=TraceContext(inputs=..., metadata=..., trace_id=...)`. Failed
+calls emit a failed-trace span and carry it as `exc.trace`. Sinks are
+fire-and-forget: a raising sink is logged and never breaks generation.
+
+## Trace-backed generation (in-process)
 
 `Prompt.generate_trace(...)` returns a generation result wrapper with the normal
-`GenerateTextResult` fields plus a replayable `Trace`. `Prompt.stream_trace(...)`
+`GenerateTextResult` fields plus a replayable `Trace` — the in-process
+convenience for optimizer evaluators and tests. It rides the telemetry
+pipeline (the returned trace is the same object connected sinks receive). `Prompt.stream_trace(...)`
 does the same for `stream_text`; its trace is awaitable after the stream
 finishes:
 

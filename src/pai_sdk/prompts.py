@@ -930,6 +930,16 @@ class Prompt(BaseModel):
                 kwargs.setdefault("tool_choice", choice)
         if self.max_steps is not None:
             kwargs.setdefault("stop_when", step_count_is(self.max_steps))
+        if "trace_context" not in kwargs:
+            # Integrated telemetry: traces from prompt calls carry the
+            # semantic row (variables) and prompt identity automatically.
+            from .telemetry import TraceContext
+            from .trace import _prompt_metadata
+
+            kwargs["trace_context"] = TraceContext(
+                inputs=dict(variables or {}),
+                metadata=_prompt_metadata(self),
+            )
         return kwargs
 
     async def generate(

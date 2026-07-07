@@ -168,6 +168,7 @@ class StreamTraceResult:
     span_id: Optional[str] = None
     root_span_id: Optional[str] = None
     parent_span_id: Optional[str] = None
+    sinks: tuple = ()
     _trace: Optional[Trace] = field(default=None, init=False, repr=False)
 
     def __getattr__(self, name: str) -> Any:
@@ -213,7 +214,13 @@ class StreamTraceResult:
                 root_span_id=self.root_span_id,
                 parent_span_id=self.parent_span_id,
             )
+            from .telemetry import emit_trace
+
+            await emit_trace(self._trace, self.sinks)
             raise _attach_trace(exc, self._trace) from exc
+        from .telemetry import emit_trace
+
+        await emit_trace(self._trace, self.sinks)
         return self._trace
 
 
@@ -779,11 +786,11 @@ async def generate_trace(
     """
 
     from .generate import generate_text
+    from .telemetry import TraceCollector, TraceContext
 
     if _is_prompt_config(prompt_or_config):
         prompt = prompt_or_config
         call_kwargs = prompt._call_kwargs(variables, model, handlers, overrides)
-        input_messages = list(call_kwargs["messages"])
         trace_inputs = inputs if inputs is not None else dict(variables or {})
         base_metadata = _prompt_metadata(prompt)
     else:
@@ -798,24 +805,19 @@ async def generate_trace(
         )
         base_metadata = {}
 
-    try:
-        result = await generate_text(**call_kwargs)
-    except BaseException as exc:
-        trace = build_failed_trace(
-            inputs=trace_inputs,
-            input_messages=input_messages,
-            error=exc,
-            metadata={**base_metadata, **(metadata or {})},
-            trace_id=trace_id,
-            span_id=span_id,
-            root_span_id=root_span_id,
-            parent_span_id=parent_span_id,
-        )
-        raise _attach_trace(exc, trace) from exc
-    trace = build_trace(
+    collector = TraceCollector()
+    existing = call_kwargs.get("telemetry")
+    call_kwargs["telemetry"] = (
+        [collector]
+        if existing in (None, True)
+        else [collector, existing]
+        if callable(existing)
+        else [collector, *existing]
+        if existing
+        else [collector]
+    )
+    call_kwargs["trace_context"] = TraceContext(
         inputs=trace_inputs,
-        result=result,
-        input_messages=input_messages,
         outputs=outputs,
         metadata={**base_metadata, **(metadata or {})},
         trace_id=trace_id,
@@ -823,7 +825,11 @@ async def generate_trace(
         root_span_id=root_span_id,
         parent_span_id=parent_span_id,
     )
-    return GenerateTraceResult(result=result, trace=trace)
+    # The integrated pipeline builds exactly one trace, delivers it to the
+    # collector AND any connected sinks, and attaches it to failures.
+    result = await generate_text(**call_kwargs)
+    assert collector.last is not None
+    return GenerateTraceResult(result=result, trace=collector.last)
 
 
 def stream_trace(
@@ -863,6 +869,9 @@ def stream_trace(
         )
         base_metadata = {}
 
+    from .telemetry import active_sinks
+
+    call_kwargs["telemetry"] = False  # this wrapper builds the (single) trace
     return StreamTraceResult(
         result=stream_text(**call_kwargs),
         input_messages=input_messages,
@@ -873,4 +882,5 @@ def stream_trace(
         span_id=span_id,
         root_span_id=root_span_id,
         parent_span_id=parent_span_id,
+        sinks=active_sinks(),
     )
