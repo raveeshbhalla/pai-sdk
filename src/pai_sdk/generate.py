@@ -1504,7 +1504,7 @@ async def generate_text(
     inputs/metadata and span relationships (Prompt.generate sets it
     automatically).
     """
-    from .telemetry import TraceContext, emit_trace, resolve_sinks
+    from .telemetry import TraceContext, emit_trace, resolve_sinks, start_live_call
 
     impl_kwargs = dict(
         model=model,
@@ -1534,12 +1534,15 @@ async def generate_text(
         timeout=timeout,
     )
     sinks = resolve_sinks(telemetry)
-    if not sinks:
+    ctx = trace_context or TraceContext()
+    live = None if telemetry is False else start_live_call("pai_sdk.generate_text", ctx)
+    if not sinks and live is None:
         return await _generate_text_impl(**impl_kwargs)
+    if live is not None:
+        impl_kwargs["prepare_step"] = live.chain_prepare_step(prepare_step)
+        impl_kwargs["on_step_finish"] = live.chain_on_step_finish(on_step_finish)
 
     from .trace import build_failed_trace, build_trace
-
-    ctx = trace_context or TraceContext()
     input_messages = list(
         standardize_prompt(system=system, prompt=prompt, messages=messages)
     )
@@ -1558,6 +1561,8 @@ async def generate_text(
             parent_span_id=ctx.parent_span_id,
         )
         await emit_trace(failed, sinks)
+        if live is not None:
+            live.fail(exc, failed)
         setattr(exc, "trace", failed)
         raise
     trace = build_trace(
@@ -1572,6 +1577,8 @@ async def generate_text(
         parent_span_id=ctx.parent_span_id,
     )
     await emit_trace(trace, sinks)
+    if live is not None:
+        live.finish(trace)
     return result
 
 
@@ -1617,7 +1624,7 @@ def stream_text(
     generate_text: with sinks connected, a replayable `Trace` is emitted when
     the stream finishes (or fails/aborts, as a failed-trace span).
     """
-    from .telemetry import TraceContext, emit_trace, resolve_sinks
+    from .telemetry import TraceContext, emit_trace, resolve_sinks, start_live_call
 
     impl_kwargs = dict(
         model=model,
@@ -1653,13 +1660,16 @@ def stream_text(
         transform=transform,
     )
     sinks = resolve_sinks(telemetry)
-    if not sinks:
+    ctx = trace_context or TraceContext()
+    live = None if telemetry is False else start_live_call("pai_sdk.stream_text", ctx)
+    if not sinks and live is None:
         return _stream_text_impl(**impl_kwargs)
+    if live is not None:
+        impl_kwargs["prepare_step"] = live.chain_prepare_step(prepare_step)
+        impl_kwargs["on_step_finish"] = live.chain_on_step_finish(on_step_finish)
 
     from .serialize import dump_messages
     from .trace import build_failed_trace, build_trace_from_messages
-
-    ctx = trace_context or TraceContext()
     input_messages = list(
         standardize_prompt(system=system, prompt=prompt, messages=messages)
     )
@@ -1723,6 +1733,8 @@ def stream_text(
             parent_span_id=ctx.parent_span_id,
         )
         await emit_trace(trace, sinks)
+        if live is not None:
+            live.finish(trace)
 
     async def _emit_failure(error: BaseException) -> None:
         result = holder.get("result")
@@ -1739,6 +1751,8 @@ def stream_text(
             parent_span_id=ctx.parent_span_id,
         )
         await emit_trace(failed, sinks)
+        if live is not None:
+            live.fail(error, failed)
 
     async def _finish_hook(result: StreamTextResult) -> None:
         if user_on_finish is not None:

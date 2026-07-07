@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pai-sdk"
-version = "0.7.0"
+version = "0.8.0"
 description = "AI-SDK-style ModelMessage types, generate_text/stream_text, and prompt configs for Python — OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, Vertex, Azure."
 readme = "README.md"
 classifiers = [
@@ -37,11 +37,13 @@ google = ["google-genai>=1.0"]
 bedrock = ["anthropic[bedrock]>=0.40"]
 vertex = ["anthropic[vertex]>=0.40", "google-genai>=1.0"]
 yaml = ["pyyaml>=6"]
+otel = ["opentelemetry-api>=1.20"]
 all = [
     "openai>=1.60",
     "anthropic[bedrock,vertex]>=0.40",
     "google-genai>=1.0",
     "pyyaml>=6",
+    "opentelemetry-api>=1.20",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -55,4 +57,4 @@ markers = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "jsonschema>=4"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "jsonschema>=4", "opentelemetry-sdk>=1.20"]

@@ -290,6 +290,25 @@ Prompt calls attach the semantic context automatically (variables as
 `trace_context=TraceContext(inputs=..., metadata=..., trace_id=...)`. Failed
 calls emit a failed-trace span and carry it as `exc.trace`. Sinks are
 fire-and-forget: a raising sink is logged and never breaks generation.
+Wrap blocking or network sinks in `queued_sink(...)` — delivery moves to a
+background worker (sync sinks run in a thread) and `await queued.flush()`
+drains before shutdown.
+
+For OpenTelemetry vendors, skip sinks entirely:
+
+```python
+from pai_sdk.integrations.otel import instrument
+instrument()      # real OTel spans via the global tracer provider
+```
+
+Every call opens a `pai_sdk.generate_text`/`pai_sdk.stream_text` span
+*during* execution — nested under whatever span is current (your web-request
+span), with one `pai_sdk.step N` child per provider step — and on completion
+the call span carries the same lossless `pai.*` attributes as
+`trace_to_otel_spans`, so `trace_from_otel_spans` recreates replayable
+history straight from your backend. Batching/sampling/export belong to your
+OTel SDK pipeline; instrumentation failures are logged and never break
+generation. Requires `pip install "pai-sdk[otel]"`.
 
 ## Trace-backed generation (in-process)
 

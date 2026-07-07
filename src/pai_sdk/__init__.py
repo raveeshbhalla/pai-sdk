@@ -126,12 +126,14 @@ from .provider import CallOptions, FunctionToolSpec, LanguageModel, ProviderResu
 from .serialize import dump_messages, dump_messages_json, load_messages
 from .spec import BoundPrompt, PromptSpec, prompt_spec
 from .telemetry import (
+    QueuedSink,
     TraceCollector,
     TraceContext,
     TraceSink,
     configure_telemetry,
     jsonl_sink,
     otel_sink,
+    queued_sink,
     telemetry,
 )
 from .trace import (
@@ -437,5 +439,7 @@ __all__ = [
     "TraceSink",
     "otel_sink",
     "jsonl_sink",
+    "queued_sink",
+    "QueuedSink",
     "system_instruction_target",
 ]
