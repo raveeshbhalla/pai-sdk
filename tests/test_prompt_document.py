@@ -492,7 +492,7 @@ async def test_span_feedback_from_generated_trace():
             "name": "weather",
             "user": "Weather in {{city}}?",
             "tools": {"get_weather": {"description": "w", "input": {"city": "string"}}},
-            "max_steps": 3,
+            "maxSteps": 3,
         }
     )
 
@@ -652,3 +652,60 @@ def test_redact_trace_content_scrubs_headers():
     )
     redacted = redact_trace_content(Trace(id="s", spans=[span]))
     assert redacted["spans"][0]["metadata"]["response"]["headers"] == {"redacted": True}
+
+
+# ---------------------------------------------------------------------------
+# camelCase document vocabulary (params = AI SDK option names)
+# ---------------------------------------------------------------------------
+
+
+async def test_params_use_ai_sdk_vocabulary():
+    prompt = load_prompt(
+        {
+            "name": "x",
+            "user": "Q: {{q}}",
+            "params": {
+                "maxOutputTokens": 500,
+                "topP": 0.9,
+                "providerOptions": {"anthropic": {"thinking": {"type": "adaptive"}}},
+            },
+        }
+    )
+    model = FakeModel(steps=[text_step("ok")])
+    await prompt.generate({"q": "hi"}, model=model)
+    options = model.calls[0]
+    assert options.max_output_tokens == 500
+    assert options.top_p == 0.9
+    assert options.provider_options == {"anthropic": {"thinking": {"type": "adaptive"}}}
+
+
+def test_snake_case_params_rejected_with_hint():
+    with pytest.raises(Exception, match="did you mean 'maxOutputTokens'"):
+        load_prompt(
+            {"name": "x", "user": "hi", "params": {"max_output_tokens": 500}}
+        )
+
+
+async def test_tool_choice_uses_tool_name_camel():
+    prompt = load_prompt(
+        {
+            "name": "x",
+            "user": "Q: {{q}}",
+            "tools": {"lookup": {"description": "d", "input": {"id": "string"}}},
+            "toolChoice": {"type": "tool", "toolName": "lookup"},
+            "maxSteps": 2,
+        }
+    )
+    assert prompt.to_dict()["toolChoice"] == {"type": "tool", "toolName": "lookup"}
+    model = FakeModel(steps=[text_step("ok")])
+    await prompt.generate({"q": "hi"}, model=model)
+    assert model.calls[0].tool_choice == {"type": "tool", "tool_name": "lookup"}
+    with pytest.raises(Exception, match="toolName"):
+        load_prompt(
+            {
+                "name": "x",
+                "user": "hi",
+                "tools": {"lookup": {"input": {"id": "string"}}},
+                "toolChoice": {"type": "tool", "tool_name": "lookup"},
+            }
+        )

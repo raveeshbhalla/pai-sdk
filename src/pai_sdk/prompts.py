@@ -17,8 +17,8 @@ The simple form covers the common case — one system prompt, one user template:
 
     name: support-triage
     model: anthropic/claude-haiku-4-5       # optional provider/model string
-    params:                                 # optional generate_text kwargs
-      max_output_tokens: 1000
+    params:                                 # AI SDK option names, sent verbatim
+      maxOutputTokens: 1000
     input:                                  # optional structured input signature
       company_name: string
       ticket_text: string
@@ -108,6 +108,23 @@ PROMPT_CONFIG_SCHEMA: dict[str, Any] = json.loads(
 )
 
 _SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+# Document `params` keys are the AI SDK option vocabulary (camelCase), so a
+# TypeScript runtime passes them to generateText/streamText verbatim. This
+# table maps them onto pai-sdk's snake_case keyword arguments; unknown keys
+# pass through unchanged.
+_PARAM_KEY_TO_KWARG = {
+    "maxOutputTokens": "max_output_tokens",
+    "topP": "top_p",
+    "topK": "top_k",
+    "presencePenalty": "presence_penalty",
+    "frequencyPenalty": "frequency_penalty",
+    "stopSequences": "stop_sequences",
+    "maxRetries": "max_retries",
+    "providerOptions": "provider_options",
+    "activeTools": "active_tools",
+}
+_PARAM_SNAKE_HINTS = {snake: camel for camel, snake in _PARAM_KEY_TO_KWARG.items()}
 
 
 class PromptError(AISDKError):
@@ -439,8 +456,8 @@ class Prompt(BaseModel):
     input: Optional[PromptInput] = None
     output: Optional[PromptOutput] = None
     tools: dict[str, PromptTool] = Field(default_factory=dict)
-    tool_choice: Optional[ToolChoiceConfig] = None
-    max_steps: Optional[int] = Field(default=None, ge=1)
+    tool_choice: Optional[ToolChoiceConfig] = Field(default=None, alias="toolChoice")
+    max_steps: Optional[int] = Field(default=None, ge=1, alias="maxSteps")
     messages: list[PromptMessage] = Field(default_factory=list)
     skills: dict[str, PromptSkill] = Field(default_factory=dict)
 
@@ -546,6 +563,25 @@ class Prompt(BaseModel):
                 raise ValueError(
                     f"Invalid skill name '{name}' (letters, digits, '-', '_' only)."
                 )
+        for key in self.params:
+            if key in _PARAM_SNAKE_HINTS:
+                raise ValueError(
+                    f"Unknown params key '{key}' — did you mean "
+                    f"'{_PARAM_SNAKE_HINTS[key]}'? Document params use AI SDK "
+                    "option names."
+                )
+        if isinstance(self.tool_choice, dict):
+            if "tool_name" in self.tool_choice:
+                raise ValueError(
+                    "tool choice uses {'type': 'tool', 'toolName': ...} — "
+                    "'tool_name' is not a document key."
+                )
+            if self.tool_choice.get("type") != "tool" or not isinstance(
+                self.tool_choice.get("toolName"), str
+            ):
+                raise ValueError(
+                    "Object tool choice must be {'type': 'tool', 'toolName': <str>}."
+                )
         ids = [m.id for m in self._effective_messages() if m.id is not None]
         if len(ids) != len(set(ids)):
             raise ValueError(
@@ -640,6 +676,18 @@ class Prompt(BaseModel):
             if not data.get(key):
                 data.pop(key, None)
         return data
+
+    def export(self, path: Union[str, Path]) -> Path:
+        """Write the serialized document to a .json file (pretty-printed).
+
+        The file is what an external optimizer (or another runtime) ingests;
+        `load_prompt(path)` round-trips it.
+        """
+        target = Path(path)
+        target.write_text(
+            json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n"
+        )
+        return target
 
     def input_schema(self) -> Optional[dict[str, Any]]:
         """Return the declared structured input schema, if any."""
@@ -827,7 +875,13 @@ class Prompt(BaseModel):
                 f"Prompt '{self.name}' has no model — set `model:` in the "
                 "config or pass model= at call time."
             )
-        kwargs: dict[str, Any] = {**self.params, **overrides}
+        kwargs: dict[str, Any] = {
+            **{
+                _PARAM_KEY_TO_KWARG.get(key, key): value
+                for key, value in self.params.items()
+            },
+            **overrides,
+        }
         kwargs["model"] = resolved_model
         kwargs["messages"] = self.render(variables)
         if self.output is not None and "output" not in kwargs:
@@ -868,7 +922,12 @@ class Prompt(BaseModel):
                 },
             )
             if self.tool_choice is not None:
-                kwargs.setdefault("tool_choice", self.tool_choice)
+                choice = self.tool_choice
+                if isinstance(choice, dict):
+                    # document shape {"type": "tool", "toolName": ...} ->
+                    # pai-sdk's internal {"type": "tool", "tool_name": ...}
+                    choice = {"type": "tool", "tool_name": choice["toolName"]}
+                kwargs.setdefault("tool_choice", choice)
         if self.max_steps is not None:
             kwargs.setdefault("stop_when", step_count_is(self.max_steps))
         return kwargs

@@ -26,10 +26,12 @@ editor support.
 | `version` | string \| int | no | Free-form version marker. |
 | `description` | string | no | |
 | `model` | string | no | `provider/model-id` (e.g. `anthropic/claude-haiku-4-5`). Omit to supply `model=` at call time. |
-| `params` | object | no | `generate_text` kwargs applied on every call; per-call overrides win. |
+| `params` | object | no | Call options in the **AI SDK vocabulary** (camelCase: `maxOutputTokens`, `temperature`, `topP`, `providerOptions`, ...). TypeScript passes them to `generateText`/`streamText` verbatim; Python maps them 1:1 onto `generate_text` kwargs. Per-call overrides win. Snake_case keys are rejected with a did-you-mean error. |
 | `input` | object | no | Structured input signature — shorthand or full JSON Schema (below). |
 | `output` | object | no | Structured output — shorthand or full JSON Schema (below). |
 | `system` / `user` | string \| object | no | Simple form (below). Mutually exclusive with `messages`. |
+| `toolChoice` | string \| object | no | `auto` \| `none` \| `required` \| `{type: tool, toolName}`. |
+| `maxSteps` | integer | no | Tool-loop budget. |
 | `messages` | array | no | General form (below). |
 | `skills` | object | no | Named blocks of model-facing prose (below). |
 
@@ -166,8 +168,8 @@ tools:
   search_docs:
     description: Search documentation.
     input: { schema: { type: object, properties: {...}, ... } }   # full JSON Schema
-tool_choice: auto         # auto | none | required | {type: tool, tool_name: ...}
-max_steps: 5              # tool-loop budget -> stop_when=step_count_is(5)
+toolChoice: auto          # auto | none | required | {type: tool, toolName: ...}
+maxSteps: 5               # tool-loop budget -> stop_when=step_count_is(5)
 ```
 
 ```python
@@ -309,6 +311,49 @@ and `stream_trace(...)` attach a failed `Trace` to the original exception as
 `.trace`. The span includes the rendered input messages, `outputs.error`, and
 `metadata.error` so failed calls remain observable and replayable from the same
 input prefix.
+
+## PromptSpec — the typed code socket
+
+Documents are always self-sufficient (`load_prompt` runs them untyped). A
+`PromptSpec` is opt-in for apps that want typed inputs/outputs, pre-bound tool
+handlers, and load-time contract validation. The split is exact: the document
+owns everything model-facing (templates, skills, tool descriptions, model,
+params — what an external optimization plane like Orizu evolves); the spec
+owns exactly what JSON cannot carry (Pydantic types and handler functions).
+
+```python
+from pai_sdk import prompt_spec, tool
+
+triage = prompt_spec(
+    name="support-triage",              # the join key with documents
+    input=TriageInput,                   # Pydantic models
+    output=TriageVerdict,
+    tools={"lookup_customer": tool(lookup_customer, description="Look up the plan.")},
+)
+
+# Day 0 — author the seed text through the spec (typed end to end):
+seed = triage.document(
+    model="anthropic/claude-haiku-4-5",
+    system="You triage tickets for {{company}}. Be decisive.",
+    user="Ticket: {{ticket}}",
+)
+seed.export("prompts/support-triage.json")        # -> what the optimizer ingests
+
+# Every day after — plug the optimized JSON back in:
+prompt = triage.load("prompts/support-triage.optimized.json")
+result = await prompt.generate(TriageInput(company="Acme", ticket="It broke"))
+result.output                                      # TriageVerdict instance
+```
+
+`bind()`/`load()` enforce the adoption contract at load time: name must
+match; required input fields and types must match exactly (documents may add
+extra *optional* fields, e.g. trace metadata); output and tool input schemas
+must be structurally compatible (prose like `title`/`description` is
+ignored); tool/skill *descriptions* are never checked — they are optimizer
+territory. Everything `apply_candidate` produces binds by construction, so a
+bind failure means a human broke the contract — caught at deploy time, not
+mid-conversation. Spec handlers auto-bind on every call; call-time
+`handlers=` win.
 
 ## External optimizer runners
 

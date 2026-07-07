@@ -4,7 +4,7 @@
     "name": "support-triage",
     "model": "anthropic/claude-haiku-4-5",
     "params": {
-      "max_output_tokens": 500
+      "maxOutputTokens": 500
     },
     "output": {
       "urgency": [
@@ -26,7 +26,7 @@
       "system",
       "user"
     ],
-    "contentHash": "d9346dd48a4cb389",
+    "contentHash": "aba20f590ab8e17c",
     "roundTrip": true
   },
   "cases": [

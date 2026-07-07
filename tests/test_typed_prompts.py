@@ -128,7 +128,7 @@ CONFIG = {
     "name": "triage",
     "version": 1,
     "model": "anthropic/claude-haiku-4-5",
-    "params": {"temperature": 0.2, "max_output_tokens": 500},
+    "params": {"temperature": 0.2, "maxOutputTokens": 500},
     "output": {
         "schema": {
             "type": "object",
@@ -329,7 +329,7 @@ async def test_prompt_config_live_optimizer_loop(tmp_path):
     config = {
         "name": "sentiment",
         "model": "anthropic/claude-haiku-4-5",
-        "params": {"max_output_tokens": 300},
+        "params": {"maxOutputTokens": 300},
         "output": {
             "schema": {
                 "type": "object",
@@ -576,7 +576,7 @@ jsonschema = pytest.importorskip("jsonschema")
 SIMPLE_FORM = {
     "name": "triage",
     "model": "anthropic/claude-haiku-4-5",
-    "params": {"max_output_tokens": 500},
+    "params": {"maxOutputTokens": 500},
     "input": {"company": "string", "ticket": "string"},
     "output": {"urgency": ["low", "high"], "tags": "string[]", "user": {"id": "integer"}},
     "system": "You triage tickets for {{company}}.",
@@ -660,8 +660,8 @@ TOOL_CONFIG = {
                                   "required": ["query"], "additionalProperties": False}},
         },
     },
-    "tool_choice": "auto",
-    "max_steps": 3,
+    "toolChoice": "auto",
+    "maxSteps": 3,
 }
 
 
@@ -754,8 +754,8 @@ def test_tools_round_trip_and_schema_agreement():
     # ...and rejects malformed tool configs that the loader also rejects
     bad = [
         {**TOOL_CONFIG, "tools": {"x": {"inputs": {}}}},        # typo'd key
-        {**TOOL_CONFIG, "tool_choice": "always"},               # bad enum
-        {**TOOL_CONFIG, "max_steps": 0},                        # below minimum
+        {**TOOL_CONFIG, "toolChoice": "always"},               # bad enum
+        {**TOOL_CONFIG, "maxSteps": 0},                        # below minimum
     ]
     for config in bad:
         assert not _validates(config), f"schema wrongly accepted {config}"
@@ -780,7 +780,7 @@ async def test_prompt_config_tool_loop_live():
         {
             "name": "weather-live",
             "model": "anthropic/claude-haiku-4-5",
-            "params": {"max_output_tokens": 1000},
+            "params": {"maxOutputTokens": 1000},
             "system": "Use the get_weather tool to answer weather questions.",
             "user": "What's the weather in {{city}}? Use the tool.",
             "tools": {
@@ -790,7 +790,7 @@ async def test_prompt_config_tool_loop_live():
                     "input": {"city": "string"},
                 }
             },
-            "max_steps": 3,
+            "maxSteps": 3,
         }
     )
     result = await prompt.generate(

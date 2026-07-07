@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.0 — 2026-07-07
+
+- **PromptSpec** (`prompt_spec`, `PromptSpec`, `BoundPrompt`): the typed code
+  socket a prompt document plugs into. The spec owns what JSON cannot carry
+  (Pydantic input/output models, tool handler functions); documents own all
+  model-facing text. `spec.document(...)` authors typed seeds,
+  `spec.load()/bind()/load_url()` validate a document against the contract at
+  load time (name, required input fields + types exact, extra optional
+  fields allowed, output/tool schemas structurally compatible, prose
+  ignored), `bound.generate(InputModel(...))` returns typed output with spec
+  handlers auto-bound. `Prompt.export(path)` writes the pretty JSON an
+  optimizer ingests.
+- **BREAKING: document vocabulary is camelCase.** `params` keys are the AI
+  SDK option names verbatim (`maxOutputTokens`, `topP`, `providerOptions`,
+  ...) — TypeScript passes them to generateText/streamText untouched; Python
+  maps them 1:1 onto its kwargs. `toolChoice`, `maxSteps`, and
+  `{type: "tool", toolName}` replace the last snake_case document keys.
+  Snake_case params are rejected with a did-you-mean error. Conformance
+  fixtures and content hashes regenerated. (Decided pre-release, while
+  nothing has shipped.)
+
 ## 0.5.0 — 2026-07-06
 
 The portable prompt document. One versioned, JSON-Schema-validated document is
