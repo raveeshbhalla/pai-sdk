@@ -254,8 +254,13 @@ class BoundPrompt(Generic[InputT, OutputT]):
     prompt: Prompt
 
     def __getattr__(self, name: str) -> Any:
-        # object.__getattribute__ avoids unbounded recursion when copy/pickle
-        # probe dunder methods on a not-yet-initialized instance.
+        # Never forward dunder lookups: copy/pickle protocol probes (e.g.
+        # __getstate__, absent from `object` on Python 3.10) must not resolve
+        # to the wrapped Prompt's, or copies get the Prompt's state instead
+        # of the BoundPrompt's. Also avoids recursion on uninitialized
+        # instances.
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
         try:
             prompt = object.__getattribute__(self, "prompt")
         except AttributeError:
