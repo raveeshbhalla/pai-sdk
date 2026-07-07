@@ -312,6 +312,49 @@ and `stream_trace(...)` attach a failed `Trace` to the original exception as
 `metadata.error` so failed calls remain observable and replayable from the same
 input prefix.
 
+## PromptSpec — the typed code socket
+
+Documents are always self-sufficient (`load_prompt` runs them untyped). A
+`PromptSpec` is opt-in for apps that want typed inputs/outputs, pre-bound tool
+handlers, and load-time contract validation. The split is exact: the document
+owns everything model-facing (templates, skills, tool descriptions, model,
+params — what an external optimization plane like Orizu evolves); the spec
+owns exactly what JSON cannot carry (Pydantic types and handler functions).
+
+```python
+from pai_sdk import prompt_spec, tool
+
+triage = prompt_spec(
+    name="support-triage",              # the join key with documents
+    input=TriageInput,                   # Pydantic models
+    output=TriageVerdict,
+    tools={"lookup_customer": tool(lookup_customer, description="Look up the plan.")},
+)
+
+# Day 0 — author the seed text through the spec (typed end to end):
+seed = triage.document(
+    model="anthropic/claude-haiku-4-5",
+    system="You triage tickets for {{company}}. Be decisive.",
+    user="Ticket: {{ticket}}",
+)
+seed.export("prompts/support-triage.json")        # -> what the optimizer ingests
+
+# Every day after — plug the optimized JSON back in:
+prompt = triage.load("prompts/support-triage.optimized.json")
+result = await prompt.generate(TriageInput(company="Acme", ticket="It broke"))
+result.output                                      # TriageVerdict instance
+```
+
+`bind()`/`load()` enforce the adoption contract at load time: name must
+match; required input fields and types must match exactly (documents may add
+extra *optional* fields, e.g. trace metadata); output and tool input schemas
+must be structurally compatible (prose like `title`/`description` is
+ignored); tool/skill *descriptions* are never checked — they are optimizer
+territory. Everything `apply_candidate` produces binds by construction, so a
+bind failure means a human broke the contract — caught at deploy time, not
+mid-conversation. Spec handlers auto-bind on every call; call-time
+`handlers=` win.
+
 ## External optimizer runners
 
 pai-sdk does not ship or depend on an optimizer. External runners own GEPA,

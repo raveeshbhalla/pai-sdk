@@ -124,6 +124,7 @@ from .optimization import (
 )
 from .provider import CallOptions, FunctionToolSpec, LanguageModel, ProviderResult
 from .serialize import dump_messages, dump_messages_json, load_messages
+from .spec import BoundPrompt, PromptSpec, prompt_spec
 from .trace import (
     GenerateTraceResult,
     Span,
@@ -409,6 +410,9 @@ __all__ = [
     "PROMPT_CONFIG_SCHEMA",
     "PROMPT_SPEC_VERSION",
     "PromptTool",
+    "PromptSpec",
+    "BoundPrompt",
+    "prompt_spec",
     "OptimizerTarget",
     "OptimizerTargetKind",
     "list_optimizer_targets",

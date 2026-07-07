@@ -670,6 +670,18 @@ class Prompt(BaseModel):
                 data.pop(key, None)
         return data
 
+    def export(self, path: Union[str, Path]) -> Path:
+        """Write the serialized document to a .json file (pretty-printed).
+
+        The file is what an external optimizer (or another runtime) ingests;
+        `load_prompt(path)` round-trips it.
+        """
+        target = Path(path)
+        target.write_text(
+            json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n"
+        )
+        return target
+
     def input_schema(self) -> Optional[dict[str, Any]]:
         """Return the declared structured input schema, if any."""
 
