@@ -1,0 +1,76 @@
+{
+  "description": "Template semantics: single braces literal, escaped mustache, unicode variables and values, whitespace in tags, stringified values.",
+  "document": {
+    "name": "template-semantics",
+    "messages": [
+      {
+        "id": "json-example",
+        "role": "system",
+        "template": "Reply with JSON like {\"answer\": \"yes\"} for {{ company }}."
+      },
+      {
+        "id": "escaped",
+        "role": "system",
+        "template": "Write \\{{name}} literally, then {{actual}}."
+      },
+      {
+        "id": "literal",
+        "role": "system",
+        "content": "This {{is}} literal content with {braces}."
+      },
+      {
+        "id": "unicode",
+        "role": "user",
+        "template": "{{café}} counts: {{count}}"
+      }
+    ]
+  },
+  "expect": {
+    "variables": [
+      "company",
+      "actual",
+      "café",
+      "count"
+    ],
+    "messageIds": [
+      "json-example",
+      "escaped",
+      "literal",
+      "unicode"
+    ],
+    "contentHash": "c0cf42892dffcdf1",
+    "roundTrip": true
+  },
+  "cases": [
+    {
+      "variables": {
+        "company": "Acme",
+        "actual": "this",
+        "café": "München",
+        "count": 3
+      },
+      "messages": [
+        {
+          "role": "system",
+          "id": "json-example",
+          "content": "Reply with JSON like {\"answer\": \"yes\"} for Acme."
+        },
+        {
+          "role": "system",
+          "id": "escaped",
+          "content": "Write {{name}} literally, then this."
+        },
+        {
+          "role": "system",
+          "id": "literal",
+          "content": "This {{is}} literal content with {braces}."
+        },
+        {
+          "role": "user",
+          "id": "unicode",
+          "content": "München counts: 3"
+        }
+      ]
+    }
+  ]
+}

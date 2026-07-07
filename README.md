@@ -12,19 +12,30 @@ structured prompt configs, and replayable traces. The core primitive is
 `ModelMessage[]`: the same chat transcript shape that providers, tool loops,
 replay systems, and observability backends need to preserve.
 
-On top of that primitive, pai-sdk adds prompt configs that behave like a
-lightweight signature: typed inputs, Mustache-style template variables,
-structured outputs, tool declarations, and stable message/tool ids. A call can
-therefore be inspected both as a semantic row (`inputs -> outputs`) and as the
-actual provider-facing transcript (`messages`, tool calls/results, usage, and
-metadata).
+On top of that primitive, pai-sdk adds the **prompt document**
+(`specVersion: pai.prompt.v1`): a portable, JSON-Schema-validated bundle of
+everything model-facing — typed inputs, Mustache-style template variables,
+structured outputs, tool interfaces (description + input/output schemas), and
+skills — with stable ids for every piece of prose. A call can therefore be
+inspected both as a semantic row (`inputs -> outputs`) and as the actual
+provider-facing transcript (`messages`, tool calls/results, usage, and
+metadata). The same document runs identically in the TypeScript sibling,
+[structured-ai-sdk](https://github.com/raveeshbhalla/structured-ai-sdk),
+which delegates inference to the Vercel AI SDK; the shared rules (canonical
+hashing, rendering, conformance fixtures) live in [spec/](spec/README.md).
+Code-first conveniences — Pydantic models as schemas, `tool(fn)` — are
+projections that compile INTO the document, never a second source of truth.
 
 That boundary is deliberate. pai-sdk is not a DSPy replacement and does not ship
 an optimizer runtime. External optimizers such as GEPA `optimize_anything`
-should use pai-sdk as a runner: select a target in the optimizer script, apply a
-candidate prompt/tool description, run examples through `generate_trace()` or
-`stream_trace()`, and score the resulting traces. GEPA, LiteLLM, datasets, and
-search loops stay outside the package.
+use pai-sdk as a runner: `read_candidate()` extracts the selected text
+regions as the `{address: text}` candidate dict, `apply_candidate()` rebuilds
+a structurally-safe prompt from an evolved candidate, `generate_trace()` runs
+it, and `span_feedback()` turns the trace into the diagnostic side
+information a reflective proposer reads. The winner is persisted as a plain
+JSON document (`apply_candidate(...).to_dict()`) that any app loads. GEPA,
+LiteLLM, datasets, and search loops stay outside the package
+(`examples/gepa_optimize_anything.py` shows a complete runner).
 
 ## AI SDK and DSPy relationship
 
@@ -449,6 +460,10 @@ input:                        # optional structured input signature
 system: |
   You triage support tickets for {{company}}. Be decisive.
 user: "Ticket: {{ticket}}"
+skills:                       # named, addressable blocks of prose
+  refunds:
+    description: Apply when the customer asks for money back.
+    instructions: Treat refunds for {{company}} as high urgency.
 ```
 
 ```python
@@ -456,6 +471,9 @@ from pai_sdk import load_prompt
 
 prompt = load_prompt("prompts/triage.yaml")
 ```
+
+Skills render as system messages (id `skill:<name>`) after the last declared
+system message; instruction `{{variables}}` join the input contract.
 
 That's the simple form. The general form is an explicit `messages:` list — use it for multiple system blocks (e.g. frozen policy text next to mutable instructions), few-shot assistant turns, or stable message ids that optimizer scripts can target at run time — and `input: {schema: {...}}` / `output: {schema: {...}}` accept full JSON Schema:
 
@@ -521,6 +539,19 @@ prompt = Prompt(
 prompt = load_prompt({...})        # dicts work too, simple or general form
 ```
 
+Pydantic model classes work anywhere a schema does and compile to plain JSON
+Schema in `to_dict()`, so the document stays portable while `result.output`
+parses into your class:
+
+```python
+class Triage(BaseModel):
+    urgency: Literal["low", "medium", "high"]
+    summary: str
+
+prompt = Prompt(name="triage", output=Triage, messages=[...])
+result = await prompt.generate(vars)   # result.output is a Triage instance
+```
+
 Or skip configs entirely and use the typed messages straight in `generate_text` — same trace properties, no file:
 
 ```python
@@ -549,11 +580,23 @@ tools:
   get_weather:
     description: Get current weather. Call when asked about conditions.
     input: { city: string }
+    output: { temp_f: number }   # declared result schema (typing/interface data)
 max_steps: 5
 ```
 
 ```python
 result = await prompt.generate(vars, handlers={"get_weather": get_weather_fn})
+```
+
+In code, `tool(fn, description=...)` infers the name and input/output schemas
+from the function signature (the description stays explicit — it is prompt
+text):
+
+```python
+def get_weather(city: str) -> str:
+    return f"72F in {city}"
+
+tools = {"get_weather": tool(get_weather, description="Get current weather.")}
 ```
 
 ### Running prompts & the optimization contract
@@ -568,7 +611,18 @@ evolved.content_hash()                             # candidate identity
 evolved.to_dict()                                  # persist back to JSON/YAML
 ```
 
-Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage` — subclasses that carry `template`, `variables`, and `id` alongside the rendered `content`. Providers see plain messages; `dump_messages` traces keep the structure, so logs record _which instructions_ and _which bindings_ produced every rollout. Template syntax is plain `{{name}}` only (portable to a TS implementation 1:1). Prompt configs do not need an `optimize: true` marker; optimizer scripts choose the target ids they want to mutate for each run.
+Multi-target candidates use stable addresses (`message:<id>`, `tool:<name>`,
+`skill:<name>.description`, `skill:<name>.instructions`):
+
+```python
+from pai_sdk import apply_candidate, read_candidate
+
+seed = read_candidate(prompt, ["message:instructions", "skill:refunds.instructions"])
+optimized = apply_candidate(prompt, evolved_candidate)   # contract enforced
+optimized.to_dict()                                      # the optimized document
+```
+
+Rendering produces `TypedSystemMessage`/`TypedUserMessage`/`TypedAssistantMessage` — subclasses that carry `template`, `variables`, and `id` alongside the rendered `content`. Providers see plain messages; `dump_messages` traces keep the structure, so logs record _which instructions_ and _which bindings_ produced every rollout. Template syntax is plain `{{name}}` only, and rendering rules are part of the versioned spec, so the same document renders identically in structured-ai-sdk. Prompt documents never carry optimization intent; optimizer scripts choose the target addresses they want to mutate for each run.
 ## Cost estimates
 Adapters normalize every provider's cache/reasoning token accounting into `usage.input_token_details` / `usage.output_token_details`, so one formula prices all of them — uncached input, cache reads, cache writes, and text+reasoning output each at their own rate:
 

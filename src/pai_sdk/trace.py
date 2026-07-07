@@ -616,6 +616,71 @@ async def replay_trace(
     return await replay_span(span, model=model, **overrides)
 
 
+def span_feedback(
+    span: Span,
+    *,
+    include_transcript: bool = True,
+    max_transcript_chars: int = 6000,
+) -> dict[str, str]:
+    """Actionable side information (ASI) for reflective optimizers.
+
+    Turns a span into the `{label: text}` diagnostic dict a GEPA
+    `optimize_anything` evaluator returns alongside the score — the textual
+    "gradient" a reflective proposer reads to explain WHY a candidate scored
+    the way it did: finish reason, errors, tool failures, warnings, the parsed
+    output, and (optionally) the provider-near transcript.
+    """
+
+    feedback: dict[str, str] = {}
+    metadata = span.metadata or {}
+    outputs = span.outputs or {}
+
+    finish = metadata.get("finish_reason") or outputs.get("finish_reason")
+    if finish is not None:
+        feedback["finish_reason"] = str(finish)
+
+    error = metadata.get("error") or outputs.get("error")
+    if error is not None:
+        feedback["error"] = json.dumps(_jsonable(error), ensure_ascii=False)
+
+    tool_errors: list[str] = []
+    for message in dump_messages(span.messages):
+        if message.get("role") != "tool":
+            continue
+        for part in message.get("content") or []:
+            output = part.get("output") if isinstance(part, dict) else None
+            if isinstance(output, dict) and output.get("type") in (
+                "error-text",
+                "error-json",
+            ):
+                tool_errors.append(
+                    f"{part.get('toolName', '?')}: "
+                    f"{json.dumps(output.get('value'), ensure_ascii=False)}"
+                )
+    if tool_errors:
+        feedback["tool_errors"] = "\n".join(tool_errors)
+
+    warnings = metadata.get("warnings")
+    if warnings:
+        feedback["warnings"] = json.dumps(_jsonable(warnings), ensure_ascii=False)
+
+    if "object" in outputs:
+        feedback["output"] = json.dumps(_jsonable(outputs["object"]), ensure_ascii=False)
+    elif outputs.get("text"):
+        feedback["output"] = str(outputs["text"])
+
+    if span.usage is not None:
+        feedback["usage"] = json.dumps(_jsonable(span.usage), ensure_ascii=False)
+
+    if include_transcript:
+        transcript = json.dumps(dump_messages(span.messages), ensure_ascii=False)
+        if len(transcript) > max_transcript_chars:
+            transcript = transcript[:max_transcript_chars] + "…[truncated]"
+        feedback["transcript"] = transcript
+
+    return feedback
+
+
 def _prompt_metadata(prompt: Any) -> dict[str, Any]:
     input_schema = (
         prompt.input.model_dump(by_alias=True, exclude_none=True)
@@ -631,12 +696,14 @@ def _prompt_metadata(prompt: Any) -> dict[str, Any]:
         "prompt": {
             "name": prompt.name,
             "version": prompt.version,
+            "spec_version": getattr(prompt, "spec_version", None),
             "content_hash": prompt.content_hash(),
             "variables": prompt.variables,
             "input": input_schema,
             "output": output_schema,
             "message_ids": [message.id for message in prompt.messages],
             "tool_names": list(prompt.tools),
+            "skill_names": list(getattr(prompt, "skills", {}) or {}),
         }
     }
 

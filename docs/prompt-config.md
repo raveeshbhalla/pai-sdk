@@ -1,11 +1,15 @@
-# Prompt config specification
+# Prompt document specification
 
-The prompt config is pai-sdk's "prompts as data" format: a JSON-compatible
-document (authored as YAML, JSON, or a Python dict) that bundles a model
-reference, call parameters, optional input/output schemas, and message templates with
-`{{variable}}` slots. It is designed to be stored in a repo, served by a prompt
-service, and safely rewritten by external optimizer runners under an enforced
-contract.
+The prompt document (`specVersion: pai.prompt.v1`) is pai-sdk's portable
+"prompts as data" format: a JSON-compatible document (authored as YAML, JSON,
+or a Python dict) that bundles a model reference, call parameters, optional
+input/output schemas, message templates with `{{variable}}` slots, tool
+interfaces, and skills. It is designed to be stored in a repo, served by a
+prompt service, safely rewritten by external optimizer runners under an
+enforced contract, and run identically by the TypeScript sibling
+(structured-ai-sdk). The cross-language rules — canonical serialization,
+content hashing, rendering, conformance fixtures — live in
+[spec/README.md](../spec/README.md).
 
 The machine-readable schema ships in the package at
 `pai_sdk/prompt-config.schema.json` (exported as `PROMPT_CONFIG_SCHEMA`;
@@ -17,6 +21,7 @@ editor support.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
+| `specVersion` | `"pai.prompt.v1"` | no | Assumed v1 when absent; always emitted by `to_dict()`. Unknown versions are rejected. |
 | `name` | string | yes | Identifies the prompt in logs/traces. |
 | `version` | string \| int | no | Free-form version marker. |
 | `description` | string | no | |
@@ -26,6 +31,7 @@ editor support.
 | `output` | object | no | Structured output — shorthand or full JSON Schema (below). |
 | `system` / `user` | string \| object | no | Simple form (below). Mutually exclusive with `messages`. |
 | `messages` | array | no | General form (below). |
+| `skills` | object | no | Named blocks of model-facing prose (below). |
 
 A config must yield at least one message (simple or general form).
 
@@ -126,6 +132,21 @@ template is rendered.
 When `output` is present, `prompt.generate()` requests provider-strict
 structured output and returns the validated object on `result.output`.
 
+In code, a Pydantic model class works anywhere a schema does — `input`,
+`output`, and tool `input`/`output` — and compiles to plain JSON Schema on
+serialization, so the document stays portable while `result.output` parses
+into the model class:
+
+```python
+class Triage(BaseModel):
+    urgency: Literal["low", "medium", "high"]
+    summary: str
+
+prompt = Prompt(name="triage", output=Triage, messages=[...])
+result = await prompt.generate(vars)      # result.output is a Triage
+prompt.to_dict()["output"]["schema"]      # plain JSON Schema
+```
+
 ## Tools
 
 Tool **interfaces** are config; tool **behavior** is code. The config declares
@@ -139,6 +160,9 @@ tools:
     description: Get current weather. Call when asked about conditions.
     input:                # same field:type shorthand as output:
       city: string
+    output:               # declared result schema (interface/typing data;
+      temp_f: number      # not enforced against handler returns at run time)
+      conditions: string
   search_docs:
     description: Search documentation.
     input: { schema: { type: object, properties: {...}, ... } }   # full JSON Schema
@@ -154,6 +178,29 @@ Handlers for undeclared tool names raise `PromptError` (catches typos).
 Provider server-side tools (web search etc.) are not declared here — pass
 them via `provider_options`.
 
+## Skills
+
+A skill is a named, addressable block of model-facing prose: `description`
+says when it applies, `instructions` (a template) says how. Skills render as
+system messages with id `skill:<name>` after the last declared system
+message, in declaration order; instruction `{{variables}}` join the prompt's
+input contract:
+
+```yaml
+skills:
+  escalation:
+    description: When a ticket mentions legal threats or refunds over $500.
+    instructions: |
+      Escalate to a human. Summarize the thread for {{company}} first.
+```
+
+The name is the contract; both prose fields are optimizer-addressable
+(`skill:<name>.description`, `skill:<name>.instructions`).
+`with_skill_description()` swaps the prose;`with_skill_instructions()`
+enforces the same variable-set contract as `with_template()`.
+`prompt.render_message("skill:escalation", vars)` renders one skill block for
+appending to an ongoing conversation.
+
 ## The optimization contract
 
 These rules are **enforced by the library**, not advisory — they are what make
@@ -167,12 +214,17 @@ optimizer-produced versions safe to adopt automatically:
    is allowed to rewrite.
 3. **Tool descriptions are addressable prose; names and schemas are the
    contract.** `with_tool_description(name, text)` rewrites a tool's
-   description while the name and input schema remain unchanged by
+   description while the name and input/output schemas remain unchanged by
    construction. (When-to-call errors are description failures —
-   descriptions are a first-class optimization target.)
+   descriptions are a first-class optimization target.) Skills follow the
+   same split: `with_skill_description()` is free prose,
+   `with_skill_instructions()` preserves the variable set, and the skill name
+   never changes.
 4. **Mutations are non-destructive.** `with_template` returns a new `Prompt`;
-   `content_hash()` (16-hex) identifies a candidate; `to_dict()` serializes it
-   back to config form for persistence/promotion.
+   `content_hash()` (16-hex sha256 of the canonical document JSON — the
+   algorithm is specified in spec/README.md so Python and TypeScript agree)
+   identifies a candidate; `to_dict()` serializes it back to config form for
+   persistence/promotion.
 
 Consequence — the **adoption guarantee**: every optimizer-produced descendant
 of a prompt has an identical call-site signature (same variable set, same
@@ -260,28 +312,36 @@ pai-sdk provides the pieces those runners need: stable target ids,
 contract-preserving candidate application, structured output, and replayable
 traces.
 
-For example, a GEPA `optimize_anything` script can choose to optimize the
-system instruction by sending only that template text as the candidate:
+Targets are addressed as `message:<id>`, `tool:<name>`,
+`skill:<name>.description`, or `skill:<name>.instructions`. A candidate is a
+`{address: text}` dict — exactly the shape GEPA's `optimize_anything`
+evolves — and a span converts into the diagnostic feedback (ASI) its
+reflective proposer reads:
 
 ```python
-from pai_sdk import apply_optimizer_target, read_optimizer_target, system_instruction_target
+from pai_sdk import apply_candidate, read_candidate, span_feedback
 
-target = system_instruction_target(prompt, message_id="system")
-seed_candidate = read_optimizer_target(prompt, target)
+targets = ["message:system", "skill:refunds.instructions", "tool:lookup"]
+seed_candidate = read_candidate(prompt, targets)      # {address: current text}
 
-async def evaluate_candidate(candidate_text, example):
-    candidate_prompt = apply_optimizer_target(prompt, target, candidate_text)
-    traced = await candidate_prompt.generate_trace(example["inputs"], model=model)
-    return score(traced.output, example["expected"])
+def evaluate(candidate, example):                      # GEPA evaluator
+    evolved = apply_candidate(prompt, candidate)       # contract enforced
+    traced = await evolved.generate_trace(example["inputs"], model=model)
+    score = metric(traced.output, example["expected"])
+    return score, span_feedback(traced.trace.spans[0]) # score + trace ASI
 
-# The external optimizer package calls evaluate_candidate for proposals.
-best_candidate = external_optimizer_result.best_candidate
-optimized_prompt = apply_optimizer_target(prompt, target, best_candidate)
+# after the run, the winner is a plain JSON document — persist and adopt it:
+optimized = apply_candidate(prompt, result.best_candidate)
+Path("triage.optimized.json").write_text(json.dumps(optimized.to_dict()))
 ```
 
-The same pattern works for a subsection of a prompt, a user-message template,
-or a tool description. Prompt YAML does not need `optimize: true`; optimizer
-scripts decide which stable ids to target for each run.
+`examples/gepa_optimize_anything.py` is a complete runner in generalization
+mode (dataset + valset). The single-target helpers
+(`system_instruction_target`, `read_optimizer_target`,
+`apply_optimizer_target`) remain for one-target runs; they accept both
+`OptimizerTarget` values and address strings. Prompt YAML never marks
+anything optimizable; optimizer scripts decide which stable ids to target for
+each run.
 
 ## Trace integrations
 

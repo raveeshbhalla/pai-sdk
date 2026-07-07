@@ -1,13 +1,17 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "pai-sdk prompt config",
-  "description": "A prompt definition: model + params + optional input/output schemas + message templates with {{variable}} slots. Simple form: top-level system/user. General form: a messages list.",
+  "title": "pai prompt document",
+  "description": "A portable prompt document (specVersion pai.prompt.v1): model + params + optional input/output schemas + message templates with {{variable}} slots + tool interfaces + skills. Simple form: top-level system/user. General form: a messages list. Runs identically in pai-sdk (Python) and structured-ai-sdk (TypeScript).",
   "type": "object",
   "required": [
     "name"
   ],
   "additionalProperties": false,
   "properties": {
+    "specVersion": {
+      "const": "pai.prompt.v1",
+      "description": "Prompt-document spec version. Optional on input (assumed pai.prompt.v1); always emitted on output."
+    },
     "name": {
       "type": "string",
       "description": "Prompt name (identifies it in logs and traces)."
@@ -24,7 +28,7 @@
     },
     "model": {
       "type": "string",
-      "description": "provider/model-id string, e.g. 'anthropic/claude-haiku-4-5'. Optional \u2014 can be supplied at call time instead.",
+      "description": "provider/model-id string, e.g. 'anthropic/claude-haiku-4-5'. Optional — can be supplied at call time instead.",
       "examples": [
         "anthropic/claude-haiku-4-5",
         "openai/gpt-5.4-mini",
@@ -201,6 +205,16 @@
       "type": "integer",
       "minimum": 1,
       "description": "Tool-loop step budget (compiles to stop_when=step_count_is(n))."
+    },
+    "skills": {
+      "type": "object",
+      "description": "Skills, keyed by name (letters, digits, '-', '_'). Each renders as a system message with id 'skill:<name>' after the last declared system message. description = when to apply (literal prose); instructions = how (template). Both are optimizer-addressable text; the name is the contract.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/definitions/skill"
+      }
     }
   },
   "definitions": {
@@ -222,10 +236,7 @@
             },
             "content": {
               "type": "string",
-              "description": "Literal text \u2014 no interpolation, braces left alone."
-            },
-            "optimize": {
-              "type": "boolean"
+              "description": "Literal text — no interpolation, braces left alone."
             },
             "id": {
               "type": "string"
@@ -253,12 +264,7 @@
         },
         "content": {
           "type": "string",
-          "description": "Literal text \u2014 no interpolation."
-        },
-        "optimize": {
-          "type": "boolean",
-          "default": false,
-          "description": "Legacy metadata. Optimizer runs should choose target ids externally; template mutations must preserve the {{variable}} set."
+          "description": "Literal text — no interpolation."
         },
         "id": {
           "type": "string",
@@ -322,10 +328,6 @@
           "type": "string",
           "description": "What the tool does AND when to call it. Optimizer runs may target this description by tool name; the tool name and input schema are the contract and never change."
         },
-        "optimize": {
-          "type": "boolean",
-          "default": false
-        },
         "input": {
           "description": "Input schema: field-type shorthand (same grammar as output:) or full JSON Schema via {schema: {...}}.",
           "oneOf": [
@@ -359,6 +361,59 @@
         },
         "strict": {
           "type": "boolean"
+        },
+        "output": {
+          "description": "Declared result schema: field-type shorthand or full JSON Schema via {schema: {...}}. Interface documentation and typing data; not enforced against handler return values at run time.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "schema"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/outputShorthand"
+                },
+                {
+                  "not": {
+                    "required": [
+                      "schema"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "skill": {
+      "type": "object",
+      "required": [
+        "description",
+        "instructions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "When this skill applies. Literal prose (braces render as-is)."
+        },
+        "instructions": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/templateString"
+            }
+          ],
+          "description": "How to apply the skill. {{variables}} join the prompt's input contract."
         }
       }
     }

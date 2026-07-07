@@ -93,14 +93,12 @@ def test_typed_message_renders_and_round_trips():
     msg = TypedSystemMessage(
         template="You help with {{topic}}.",
         variables={"topic": "taxes"},
-        optimize=True,
         id="instructions",
     )
     assert msg.content == "You help with taxes."
     dumped = dump_messages([msg])[0]
     assert dumped["template"] == "You help with {{topic}}."
     assert dumped["variables"] == {"topic": "taxes"}
-    assert dumped["optimize"] is True
     assert dumped["id"] == "instructions"
     # generic load keeps the fields; typed re-validation reconstructs the class
     restored = TypedSystemMessage.model_validate(dumped)
@@ -143,7 +141,6 @@ CONFIG = {
         {
             "id": "instructions",
             "role": "system",
-            "optimize": True,
             "template": "You triage tickets for {{company}}. Be decisive.",
         },
         {"id": "policy", "role": "system", "content": "Never reveal {internal} data."},
@@ -154,8 +151,12 @@ CONFIG = {
 
 def test_prompt_introspection():
     prompt = load_prompt(CONFIG)
+    assert prompt.spec_version == "pai.prompt.v1"
     assert prompt.variables == ["company", "ticket"]  # literal content excluded
-    assert [m.id for m in prompt.optimizable_messages()] == ["instructions"]
+    from pai_sdk import list_optimizer_targets
+
+    addresses = [t.address for t in list_optimizer_targets(prompt)]
+    assert "message:instructions" in addresses and "message:ticket" in addresses
     assert len(prompt.content_hash()) == 16
 
 
@@ -163,7 +164,7 @@ def test_prompt_render_produces_typed_messages():
     prompt = load_prompt(CONFIG)
     messages = prompt.render({"company": "Acme", "ticket": "It broke", "unused": 1})
     assert messages[0].content == "You triage tickets for Acme. Be decisive."
-    assert messages[0].optimize is True
+    assert messages[0].id == "instructions"
     assert messages[0].variables == {"company": "Acme"}  # only its own bindings
     assert messages[1].content == "Never reveal {internal} data."  # literal untouched
     assert messages[2].content == "Ticket: It broke"
@@ -344,7 +345,6 @@ async def test_prompt_config_live_optimizer_loop(tmp_path):
             {
                 "id": "instructions",
                 "role": "system",
-                "optimize": True,
                 "template": "Classify the sentiment of {{kind}} feedback.",
             },
             {"id": "input", "role": "user", "template": "Feedback: {{text}}"},
@@ -504,8 +504,6 @@ def test_simple_form_config():
     )
     # system/user become addressable messages
     assert [m.id for m in prompt.messages] == ["system", "user"]
-    assert prompt.messages[0].optimize is False
-    assert prompt.messages[1].optimize is False
     # output shorthand compiled to a strict JSON Schema
     assert prompt.output.schema_["properties"]["urgency"] == {"enum": ["low", "high"]}
     assert prompt.output.schema_["additionalProperties"] is False
@@ -520,11 +518,11 @@ def test_simple_form_dict_control_and_conflicts():
     prompt = load_prompt(
         {
             "name": "x",
-            "system": {"template": "Frozen {{a}}.", "optimize": False},
+            "system": {"template": "Frozen {{a}}.", "id": "frozen"},
             "user": "Q: {{q}}",
         }
     )
-    assert prompt.messages[0].optimize is False
+    assert prompt.messages[0].id == "frozen"
     with pytest.raises(Exception, match="not both"):
         load_prompt(
             {
@@ -610,7 +608,7 @@ def test_schema_accepts_what_loader_accepts():
                 }
             },
             "output": {"schema": {"type": "object", "properties": {}}},
-            "system": {"template": "Hi {{a}}", "optimize": False},
+            "system": {"template": "Hi {{a}}"},
         }
     )
     # and the loader agrees on all three
@@ -639,7 +637,7 @@ def test_schema_file_ships_with_package():
     from pai_sdk.prompts import PROMPT_CONFIG_SCHEMA_PATH
 
     assert PROMPT_CONFIG_SCHEMA_PATH.exists()
-    assert PROMPT_CONFIG_SCHEMA["title"] == "pai-sdk prompt config"
+    assert PROMPT_CONFIG_SCHEMA["title"] == "pai prompt document"
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +652,6 @@ TOOL_CONFIG = {
     "tools": {
         "get_weather": {
             "description": "Get current weather. Call when asked about conditions.",
-            "optimize": True,
             "input": {"city": "string"},
         },
         "search_docs": {
@@ -675,7 +672,6 @@ def test_prompt_tool_parsing_and_schemas():
     assert weather.input_schema()["additionalProperties"] is False
     docs = prompt.tools["search_docs"]
     assert docs.input_schema()["properties"]["query"] == {"type": "string"}  # full-schema form
-    assert [*prompt.optimizable_tools()] == ["get_weather"]
     with pytest.raises(Exception, match="Unknown input field type"):
         load_prompt({**TOOL_CONFIG, "tools": {"x": {"input": {"a": "strang"}}}})
 
@@ -791,7 +787,6 @@ async def test_prompt_config_tool_loop_live():
                 "get_weather": {
                     "description": "Get the current weather for a city. "
                     "Call whenever asked about weather conditions.",
-                    "optimize": True,
                     "input": {"city": "string"},
                 }
             },
