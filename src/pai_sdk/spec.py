@@ -60,30 +60,58 @@ InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
 _IGNORED_SCHEMA_KEYS = {"title", "description"}
+# Keys whose values are field-name maps (children are schemas, keys are data).
+_MAP_KEYS = {"properties", "patternProperties", "$defs", "definitions"}
+# Keys whose values are plain data, never schemas — no filtering inside.
+_DATA_KEYS = {"enum", "const", "default", "examples"}
 
 
-def _comparable_schema(schema: Any) -> Any:
-    """Schemas compared structurally, ignoring prose keys (`title`,
-    `description`) that differ between Pydantic output and shorthand
-    compilation without changing meaning."""
-    if isinstance(schema, dict):
-        return {
-            key: _comparable_schema(value)
-            for key, value in schema.items()
-            if key not in _IGNORED_SCHEMA_KEYS
-        }
+def _comparable_schema(schema: Any, context: str = "schema") -> Any:
+    """Schemas compared structurally, ignoring prose annotation keys
+    (`title`, `description`) — but only where they ARE annotations: children
+    of `properties` are field names (a field may be literally named
+    "description"), and enum/const/default values are data. `required` is a
+    set, so its order is normalized."""
     if isinstance(schema, list):
-        return [_comparable_schema(item) for item in schema]
+        return [
+            _comparable_schema(item, "data" if context == "data" else "schema")
+            for item in schema
+        ]
+    if isinstance(schema, dict):
+        if context == "map":
+            return {
+                key: _comparable_schema(value, "schema")
+                for key, value in schema.items()
+            }
+        if context == "data":
+            return {
+                key: _comparable_schema(value, "data")
+                for key, value in schema.items()
+            }
+        result: dict[str, Any] = {}
+        for key, value in schema.items():
+            if key in _IGNORED_SCHEMA_KEYS:
+                continue
+            if key == "required" and isinstance(value, list):
+                result[key] = sorted(value)
+                continue
+            next_context = (
+                "map" if key in _MAP_KEYS else "data" if key in _DATA_KEYS else "schema"
+            )
+            result[key] = _comparable_schema(value, next_context)
+        return result
     return schema
 
 
 def _schemas_compatible(expected: Optional[dict], actual: Optional[dict]) -> bool:
+    # dict equality is key-order-insensitive in Python; `required` order is
+    # normalized above — key/element order is never semantic (spec/README.md).
     if expected is None or actual is None:
         return expected is None and actual is None
     return _comparable_schema(expected) == _comparable_schema(actual)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class PromptSpec(Generic[InputT, OutputT]):
     """Types + behavior for one named task; documents bind to it.
 
@@ -211,7 +239,7 @@ class PromptSpec(Generic[InputT, OutputT]):
                 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class BoundPrompt(Generic[InputT, OutputT]):
     """A document plugged into its spec: runnable, typed, handler-bound.
 
@@ -226,7 +254,13 @@ class BoundPrompt(Generic[InputT, OutputT]):
     prompt: Prompt
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self.prompt, name)
+        # object.__getattribute__ avoids unbounded recursion when copy/pickle
+        # probe dunder methods on a not-yet-initialized instance.
+        try:
+            prompt = object.__getattribute__(self, "prompt")
+        except AttributeError:
+            raise AttributeError(name) from None
+        return getattr(prompt, name)
 
     def _variables(self, input: Union[InputT, dict[str, Any], None]) -> dict[str, Any]:
         if isinstance(input, BaseModel):

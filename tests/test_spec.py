@@ -183,3 +183,52 @@ def test_bind_ignores_optimizable_prose():
     prose["tools"]["lookup_customer"]["description"] = "Totally rewritten by Orizu."
     prose["skills"]["refunds"]["description"] = "Rewritten too."
     spec.bind(prose)  # descriptions are optimizer territory, not contract
+
+
+def test_contract_comparison_is_schema_aware_and_order_insensitive():
+    class Doc(BaseModel):
+        description: str  # a data field literally named "description"
+        urgency: str
+
+    spec = prompt_spec(name="t", output=Doc)
+    doc = spec.document(user="Q: {{q}}").to_dict()
+
+    drifted = json.loads(json.dumps(doc))
+    drifted["output"]["schema"]["properties"]["description"] = {"type": "integer"}
+    with pytest.raises(PromptError, match="output schema"):
+        spec.bind(drifted)
+
+    reordered = json.loads(json.dumps(doc))
+    schema = reordered["output"]["schema"]
+    reordered["output"]["schema"] = {
+        "additionalProperties": schema["additionalProperties"],
+        "required": list(reversed(schema["required"])),
+        "properties": dict(reversed(list(schema["properties"].items()))),
+        "type": "object",
+    }
+    spec.bind(reordered)  # order is never semantic
+
+
+def test_bound_prompt_survives_copy_and_is_identity_hashable():
+    import copy
+
+    bound = make_seed(make_spec())
+    shallow = copy.copy(bound)
+    assert shallow.content_hash() == bound.content_hash()
+    assert copy.deepcopy(bound).content_hash() == bound.content_hash()
+    assert len({bound, make_spec()}) == 2  # identity hash, no TypeError
+    with pytest.raises(AttributeError):
+        bound.no_such_attribute
+
+
+def test_malformed_tool_choice_rejected_at_load():
+    for bad in [{"type": "tool"}, {"type": "auto"}, {"type": "tool", "toolName": 3}]:
+        with pytest.raises(Exception, match="toolName"):
+            load_prompt(
+                {
+                    "name": "x",
+                    "user": "hi",
+                    "tools": {"t": {"input": {"q": "string"}}},
+                    "toolChoice": bad,
+                }
+            )

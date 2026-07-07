@@ -570,11 +570,18 @@ class Prompt(BaseModel):
                     f"'{_PARAM_SNAKE_HINTS[key]}'? Document params use AI SDK "
                     "option names."
                 )
-        if isinstance(self.tool_choice, dict) and "tool_name" in self.tool_choice:
-            raise ValueError(
-                "tool choice uses {'type': 'tool', 'toolName': ...} — "
-                "'tool_name' is not a document key."
-            )
+        if isinstance(self.tool_choice, dict):
+            if "tool_name" in self.tool_choice:
+                raise ValueError(
+                    "tool choice uses {'type': 'tool', 'toolName': ...} — "
+                    "'tool_name' is not a document key."
+                )
+            if self.tool_choice.get("type") != "tool" or not isinstance(
+                self.tool_choice.get("toolName"), str
+            ):
+                raise ValueError(
+                    "Object tool choice must be {'type': 'tool', 'toolName': <str>}."
+                )
         ids = [m.id for m in self._effective_messages() if m.id is not None]
         if len(ids) != len(set(ids)):
             raise ValueError(
