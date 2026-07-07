@@ -5,37 +5,146 @@ Python model I/O with [Vercel AI SDK](https://ai-sdk.dev)-style ergonomics: the 
 > tooling; APIs may change before 1.0. Docs: [prompt-config spec](docs/prompt-config.md)
 > · [embedding in a platform](docs/embedding.md) · [CHANGELOG](CHANGELOG.md).
 
-## What pai-sdk is for
+## Why pai-sdk: two ideas
 
-pai-sdk exists to give Python applications a provider-near runtime for LLM calls,
-structured prompt configs, and replayable traces. The core primitive is
-`ModelMessage[]`: the same chat transcript shape that providers, tool loops,
-replay systems, and observability backends need to preserve.
+pai-sdk is built around two ideas that together turn prompt engineering from
+hand-tweaking strings in code into an offline, measurable optimization loop.
+Everything else in this README is mechanics for these two.
 
-On top of that primitive, pai-sdk adds the **prompt document**
-(`specVersion: pai.prompt.v1`): a portable, JSON-Schema-validated bundle of
-everything model-facing — typed inputs, Mustache-style template variables,
-structured outputs, tool interfaces (description + input/output schemas), and
-skills — with stable ids for every piece of prose. A call can therefore be
-inspected both as a semantic row (`inputs -> outputs`) and as the actual
-provider-facing transcript (`messages`, tool calls/results, usage, and
-metadata). The same document runs identically in the TypeScript sibling,
-[structured-ai-sdk](https://github.com/raveeshbhalla/structured-ai-sdk),
-which delegates inference to the Vercel AI SDK; the shared rules (canonical
-hashing, rendering, conformance fixtures) live in [spec/](spec/README.md).
-Code-first conveniences — Pydantic models as schemas, `tool(fn)` — are
-projections that compile INTO the document, never a second source of truth.
+### Idea 1 — prompts are documents, so they can be optimized offline
 
-That boundary is deliberate. pai-sdk is not a DSPy replacement and does not ship
-an optimizer runtime. External optimizers such as GEPA `optimize_anything`
-use pai-sdk as a runner: `read_candidate()` extracts the selected text
-regions as the `{address: text}` candidate dict, `apply_candidate()` rebuilds
-a structurally-safe prompt from an evolved candidate, `generate_trace()` runs
-it, and `span_feedback()` turns the trace into the diagnostic side
-information a reflective proposer reads. The winner is persisted as a plain
-JSON document (`apply_candidate(...).to_dict()`) that any app loads. GEPA,
-LiteLLM, datasets, and search loops stay outside the package
-(`examples/gepa_optimize_anything.py` shows a complete runner).
+Most prompts live as strings in code:
+
+```python
+system = f"You triage support tickets for {company}. Be decisive."
+```
+
+Three problems hide in that one line:
+
+- **The prose and the plumbing are fused.** "Be decisive" is an instruction
+  you might want to improve; `{company}` is data flow you must never break.
+  As one string, nothing — human or optimizer — can safely rewrite one
+  without risking the other.
+- **Improving it means editing code.** Every candidate wording is a deploy.
+  There is no identity for "the prompt that ran last Tuesday", no A/B, no
+  rollback.
+- **You can only evaluate in production.** There is no artifact to score
+  offline against a dataset.
+
+The prompt document unfuses them:
+
+```yaml
+name: support-triage
+input: {company: string, ticket: string}
+output: {urgency: [low, medium, high], summary: string}
+system: |
+  You triage support tickets for {{company}}. Be decisive.
+user: "Ticket: {{ticket}}"
+```
+
+What templating like this actually buys, each point backed by a mechanism:
+
+- **Bindings become structural.** `{{company}}` is not text; it is plumbing.
+  `with_template()` rejects any rewrite that changes a template's placeholder
+  set — so arbitrary rewriting of the prose is *safe by construction*, which
+  is the property that makes machine rewriting possible at all.
+- **Every piece of model-facing prose is addressable.** Instructions
+  (`message:system`), tool descriptions (`tool:lookup_customer`), skill text
+  (`skill:refunds.instructions`) — all have stable addresses. Documents never
+  mark what is optimizable; each optimizer *run* chooses its targets.
+- **Prompts get identity.** `content_hash()` names a candidate — pin it, A/B
+  it, record it in traces, roll it back. Hashes are byte-identical in Python
+  and in the TypeScript sibling ([structured-ai-sdk](https://github.com/raveeshbhalla/structured-ai-sdk)),
+  because the same JSON document runs in both.
+- **Improvement becomes offline search.** `read_candidate()` extracts the
+  selected prose as a `{address: text}` dict — exactly the candidate shape
+  GEPA's `optimize_anything` evolves. An external optimizer proposes
+  rewrites, `apply_candidate()` enforces the contract, and each candidate is
+  scored against your dataset — *before* any user sees it:
+
+```python
+seed = read_candidate(prompt, ["message:system", "skill:refunds.instructions"])
+# ... an external optimizer (GEPA, Orizu, ...) evolves the dict offline ...
+optimized = apply_candidate(prompt, best_candidate)   # variables/ids/schemas preserved
+optimized.export("support-triage.optimized.json")     # ship data, not code
+```
+
+The payoff is the **adoption guarantee**: every optimizer-produced descendant
+has the same variables, the same message/tool/skill ids, and the same
+schemas. Call sites cannot tell the difference — except in quality. Shipping
+a better prompt is a data update, not a deploy. (`prompt_spec()` makes this a
+typed, load-time-validated socket; see [PromptSpec](#promptspec-typed-code-socket-for-optimizer-produced-documents).)
+
+### Idea 2 — history is ModelMessage[], so real traffic becomes optimization data
+
+Offline optimization is only as good as its data, and the data you want is
+what the model *actually saw and did*. A semantic `inputs -> outputs` row
+cannot replay a tool-using rollout; the real unit of history is the
+provider-near transcript:
+
+```python
+[{"role": "system", "content": "..."},
+ {"role": "user", "content": "..."},
+ {"role": "assistant", "content": [..., {"type": "tool-call", "toolName": "lookup_customer", ...}]},
+ {"role": "tool", "content": [{"type": "tool-result", ...}]},
+ {"role": "assistant", "content": "..."}]
+```
+
+`ModelMessage[]` is that transcript as a first-class, serializable type —
+wire-compatible with the TypeScript AI SDK, resendable verbatim (tool-call
+ids and reasoning signatures replay correctly). Three consequences:
+
+- **Rollouts are replayable.** `generate_trace()` returns a `Trace` whose
+  span joins the semantic row (`inputs`/`outputs`) with the full transcript
+  (`messages`). `replay_span()` reruns it from the recorded input prefix —
+  e.g. under a candidate prompt or model — and `span_feedback()` turns a
+  rollout into the diagnostic text a reflective optimizer reads (the
+  text-optimization analog of a gradient).
+- **Provenance rides along.** Rendered messages are typed: each carries its
+  `template`, bound `variables`, and message `id`, and every span records the
+  document's `content_hash`. Every rollout is attributable to exactly the
+  prompt version and bindings that produced it — which is what lets an
+  optimizer credit outcomes to candidates.
+- **Your observability backend is already the dataset.** Because history is
+  plain data, it survives round trips through logging systems. Export spans
+  with `trace_to_otel_spans()` (lossless `pai.*` attributes plus standard
+  `gen_ai.*` mirrors), and later — when you decide to run an optimization —
+  recreate fully replayable history straight from your OTEL backend:
+
+```python
+from pai_sdk.integrations.otel import trace_from_otel_spans
+from pai_sdk import replay_span, span_feedback
+
+trace = trace_from_otel_spans(spans_from_your_collector)
+span = trace.spans[0]
+span.messages                                   # ModelMessage[] — replayable
+rerun = await replay_span(span, model=candidate_model)
+feedback = span_feedback(span)                  # optimizer-readable diagnostics
+```
+
+  Foreign observability rows work too when they carry message-shaped content:
+  `trace_from_braintrust_rows()` reconstructs `ModelMessage[]` from Braintrust
+  exports, and generic OpenLLMetry-style `gen_ai.*` spans import with usage
+  and metadata preserved. You do not need to build a data pipeline before
+  your first optimization run — the traffic you already log is the training
+  set.
+
+### The loop, end to end
+
+```
+  prompt document (JSON) ──render──▶ ModelMessage[] ──provider──▶ rollout
+         ▲                                                           │
+         │ apply_candidate()                      generate_trace() / OTEL import
+         │ (contract-enforced)                                       ▼
+  external optimizer ◀──── score + span_feedback() ◀────────── Trace / Span
+  (GEPA optimize_anything, Orizu, ...)
+```
+
+pai-sdk deliberately does **not** ship the optimizer: GEPA, LiteLLM,
+datasets, and search loops stay outside the package. pai-sdk is the runtime
+on both edges of the loop — rendering documents into transcripts, and
+turning transcripts back into candidates, scores, and shippable JSON
+(`examples/gepa_optimize_anything.py` is a complete runner).
 
 ## AI SDK and DSPy relationship
 
@@ -131,7 +240,7 @@ my_vertex = create_vertex(project="my-gcp-project", location="us-east5")
 my_azure = create_azure(azure_endpoint="https://my.openai.azure.com", api_version="2024-10-21")
 ```
 ## ModelMessage
-The same message union as the AI SDK — `system` / `user` / `assistant` / `tool` roles, discriminated content parts. Plain dicts and typed classes are interchangeable; serialized JSON is camelCase and wire-compatible with the TypeScript AI SDK.
+The same message union as the AI SDK — `system` / `user` / `assistant` / `tool` roles, discriminated content parts. Plain dicts and typed classes are interchangeable; serialized JSON is camelCase and wire-compatible with the TypeScript AI SDK. This is the "history is data" half of [the two ideas](#why-pai-sdk-two-ideas): because transcripts serialize losslessly (`dump_messages`/`load_messages`), any store that kept them — your database, your OTEL backend, a Braintrust export — is one import away from replayable, optimizable history.
 
 ```python
 from pai_sdk import (
@@ -440,7 +549,7 @@ traced = await candidate_prompt.generate_trace({"company": "Acme", "ticket": "..
 ```
 ## Typed messages & prompt configs
 
-Prompts as data: define them in YAML or JSON (in the codebase or fetched from a service) or directly in code, with Mustache-style `{{variable}}` slots and stable ids that external optimizer runners can target. All three forms produce the same `Prompt` object. Single braces are literal text, so JSON examples can appear naturally in templates.
+Prompts as data: define them in YAML or JSON (in the codebase or fetched from a service) or directly in code, with Mustache-style `{{variable}}` slots and stable ids that external optimizer runners can target. All three forms produce the same `Prompt` object. Single braces are literal text, so JSON examples can appear naturally in templates. ([Why documents at all?](#idea-1--prompts-are-documents-so-they-can-be-optimized-offline) — the short version: bindings become structural, prose becomes addressable, and improvement becomes offline search you can ship without a deploy.)
 
 ### Creating a prompt in YAML
 
