@@ -159,6 +159,104 @@ def otel_sink(export: Callable[[list[dict[str, Any]]], Any]) -> TraceSink:
     return sink
 
 
+# ---------------------------------------------------------------------------
+# Live-call instrumentation hook (registered by integrations.otel.instrument())
+# ---------------------------------------------------------------------------
+
+# A factory taking (call_name, TraceContext|None) and returning a live-call
+# handle with chain_prepare_step/chain_on_step_finish/finish/fail — or None.
+_LIVE_CALL_FACTORY: Optional[Callable[[str, Any], Any]] = None
+
+
+def set_live_call_factory(factory: Optional[Callable[[str, Any], Any]]) -> None:
+    """Internal: registered by `pai_sdk.integrations.otel.instrument()`."""
+    global _LIVE_CALL_FACTORY
+    _LIVE_CALL_FACTORY = factory
+
+
+def start_live_call(name: str, context: Any) -> Any:
+    """Internal: open a live instrumentation span for a call, if enabled."""
+    if _LIVE_CALL_FACTORY is None:
+        return None
+    try:
+        return _LIVE_CALL_FACTORY(name, context)
+    except Exception:  # noqa: BLE001 — instrumentation must never break calls
+        logger.exception("pai-sdk live-call instrumentation failed to start")
+        return None
+
+
+class QueuedSink:
+    """Decouple a sink from the request path: enqueue and return immediately.
+
+    A background worker drains the queue; sync inner sinks run in a thread
+    (so blocking I/O — files, HTTP clients — never stalls the event loop).
+    When the queue is full the oldest trace is dropped (and logged). Call
+    `await queued.flush()` before shutdown to drain outstanding traces.
+    """
+
+    def __init__(self, sink: TraceSink, *, max_queue: int = 1024) -> None:
+        self._sink = sink
+        self._max_queue = max_queue
+        self._queue: Optional[Any] = None  # asyncio.Queue, created lazily
+        self._worker: Optional[Any] = None
+        self._dropped = 0
+
+    def _ensure_worker(self) -> None:
+        import asyncio
+
+        if self._queue is None:
+            self._queue = asyncio.Queue(maxsize=self._max_queue)
+        if self._worker is None or self._worker.done():
+            self._worker = asyncio.get_running_loop().create_task(self._drain())
+
+    async def _drain(self) -> None:
+        import asyncio
+
+        assert self._queue is not None
+        while True:
+            trace = await self._queue.get()
+            try:
+                if inspect.iscoroutinefunction(self._sink):
+                    await self._sink(trace)
+                else:
+                    outcome = await asyncio.to_thread(self._sink, trace)
+                    if inspect.isawaitable(outcome):
+                        await outcome
+            except Exception:  # noqa: BLE001
+                logger.exception("queued trace sink failed; trace dropped")
+            finally:
+                self._queue.task_done()
+
+    def __call__(self, trace: Trace) -> None:
+        self._ensure_worker()
+        assert self._queue is not None
+        try:
+            self._queue.put_nowait(trace)
+        except Exception:  # queue full
+            try:
+                self._queue.get_nowait()
+                self._queue.task_done()
+                self._queue.put_nowait(trace)
+                self._dropped += 1
+                logger.warning(
+                    "queued trace sink overflow; dropped oldest trace "
+                    "(%d dropped so far)",
+                    self._dropped,
+                )
+            except Exception:  # noqa: BLE001 — never break the caller
+                logger.exception("queued trace sink could not enqueue")
+
+    async def flush(self) -> None:
+        """Wait until every enqueued trace has been delivered."""
+        if self._queue is not None:
+            await self._queue.join()
+
+
+def queued_sink(sink: TraceSink, *, max_queue: int = 1024) -> QueuedSink:
+    """Wrap any sink so delivery happens off the request path (see QueuedSink)."""
+    return QueuedSink(sink, max_queue=max_queue)
+
+
 def jsonl_sink(path: Any) -> TraceSink:
     """Append each trace as one JSON line — the simplest durable sink."""
     from .trace import dump_trace_json

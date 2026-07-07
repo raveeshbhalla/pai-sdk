@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.0 — 2026-07-07
+
+- **Live OpenTelemetry instrumentation**:
+  `pai_sdk.integrations.otel.instrument()` opens real OTel spans through the
+  (or a given) tracer provider during every `generate_text`/`stream_text`
+  call — nested under the caller's current span, one child span per provider
+  step with `gen_ai.*` usage attributes, ERROR status + recorded exception on
+  failure, and the lossless `pai.*` payload attributes on completion so
+  `trace_from_otel_spans` recreates replayable history from any OTel
+  backend. One line makes OTel-based vendors work; your OTel SDK pipeline
+  owns batching/sampling/export. `uninstrument()` reverses it. New `otel`
+  extra (`opentelemetry-api`); instrumentation failures never break calls.
+- **`queued_sink(sink)`**: moves trace delivery off the request path — a
+  background worker drains a bounded queue (oldest dropped on overflow, with
+  logging), sync sinks run in a thread so blocking I/O never stalls the
+  event loop, `await queued.flush()` drains before shutdown.
+
 ## 0.7.0 — 2026-07-07
 
 - **Integrated telemetry**: tracing is plumbing, not a separate API. Connect

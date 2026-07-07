@@ -101,10 +101,18 @@ ids and reasoning signatures replay correctly). Three consequences:
   plain, failed calls emit too (and carry `exc.trace`):
 
   ```python
-  from pai_sdk import configure_telemetry, otel_sink
-  configure_telemetry(otel_sink(my_exporter))   # once, at startup — that's it
-  result = await prompt.generate({...})          # plain result; trace emitted
+  from pai_sdk.integrations.otel import instrument
+  instrument()                                  # once, at startup — that's it
+  result = await prompt.generate({...})          # plain result; real OTel spans
   ```
+
+  `instrument()` opens genuine OpenTelemetry spans through your globally
+  configured tracer *during* each call — so they nest under your request
+  span, with a child span per provider step — and your OTel SDK pipeline
+  owns batching/sampling/retries. Any OTel-based vendor (Braintrust,
+  Langfuse, ...) works with that one line. Prefer explicit sinks instead?
+  `configure_telemetry(queued_sink(otel_sink(my_exporter)))` delivers built
+  traces off the request path.
 
   Each span joins the semantic row (`inputs`/`outputs`) with the full
   transcript (`messages`). `replay_span()` reruns any span from its recorded
@@ -498,12 +506,17 @@ Why each exists:
   
 - **Embeddings** — similarity for retrieval, dedup, or clustering eval data; same provider abstraction as text models.
   
-- **Telemetry** — `configure_telemetry(sink, ...)` (or the scoped
-  `telemetry(...)` context manager, or per-call `telemetry=`) makes every
-  `generate_text`/`stream_text` call emit a `Trace` to connected sinks:
-  `otel_sink(exporter)`, `jsonl_sink(path)`, `TraceCollector()`, or any
-  callable. Sinks are fire-and-forget — a raising sink never breaks
-  generation.
+- **Telemetry** — two complementary layers, both one-line. Live OTel
+  instrumentation: `pai_sdk.integrations.otel.instrument()` opens real spans
+  via the global tracer during each call (nested under the caller's span,
+  one child per provider step, lossless `pai.*` + `gen_ai.*` attributes —
+  `trace_from_otel_spans` recreates replayable history from your backend).
+  Trace sinks: `configure_telemetry(sink, ...)` (or the scoped
+  `telemetry(...)` context manager, or per-call `telemetry=`) delivers each
+  call's built `Trace` to `otel_sink(exporter)`, `jsonl_sink(path)`,
+  `TraceCollector()`, or any callable — wrap network/file sinks in
+  `queued_sink(...)` to keep delivery off the request path. Sinks and
+  instrumentation are fire-and-forget: failures never break generation.
 
 - **Trace helpers** — `generate_trace`/`stream_trace` are the in-process
   variants (they ride the telemetry pipeline and return the same trace the
