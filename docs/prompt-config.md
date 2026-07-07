@@ -174,9 +174,14 @@ max_steps: 5              # tool-loop budget -> stop_when=step_count_is(5)
 result = await prompt.generate(variables, handlers={"get_weather": get_weather_fn})
 ```
 
-Handlers for undeclared tool names raise `PromptError` (catches typos).
+In code, a runtime `Tool` (e.g. `tool(fn, description=...)`) can be placed
+directly in `Prompt(tools={...})`: its interface compiles into the document
+and its `execute` auto-binds as the default handler (call-time `handlers=`
+win). Handlers for undeclared tool names raise `PromptError` (catches typos).
 Provider server-side tools (web search etc.) are not declared here — pass
-them via `provider_options`.
+them via `provider_options`. Provider caveat: Gemini currently rejects tools
+combined with JSON `output` in one call — split the tool loop and the
+structured extraction into two prompts there.
 
 ## Skills
 

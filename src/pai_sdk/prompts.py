@@ -85,7 +85,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .errors import AISDKError, MissingDependencyError
 from .generate import generate_text, step_count_is, stream_text
-from .tools import tool as make_tool
+from .tools import Tool, tool as make_tool
 from .messages import ModelMessage
 from .output import Output, _strictify_schema
 from .typed import TYPED_MESSAGE_TYPES, escape_template_literals, extract_variables
@@ -285,6 +285,10 @@ class PromptTool(BaseModel):
     input: Optional[dict[str, Any]] = None
     output: Optional[dict[str, Any]] = None
     strict: Optional[bool] = None
+    # The execute function carried over when a runtime Tool (e.g. tool(fn))
+    # is placed in a Prompt. Never serialized — behavior is code, the
+    # document carries only the interface. Call-time handlers= win.
+    bound_execute: Optional[Any] = Field(default=None, exclude=True, repr=False)
 
     @field_validator("input", "output", mode="before")
     @classmethod
@@ -346,6 +350,30 @@ class Prompt(BaseModel):
         if not isinstance(data, dict):
             return data
         data = dict(data)
+
+        # Runtime Tool values (e.g. tool(fn)) compile into tool interfaces;
+        # their execute functions bind as default handlers.
+        tools_config = data.get("tools")
+        if isinstance(tools_config, dict) and any(
+            isinstance(value, Tool) for value in tools_config.values()
+        ):
+            converted: dict[str, Any] = {}
+            for name, value in tools_config.items():
+                if not isinstance(value, Tool):
+                    converted[name] = value
+                    continue
+                entry: dict[str, Any] = {"input": {"schema": value.json_schema()}}
+                if value.description is not None:
+                    entry["description"] = value.description
+                output_schema = value.output_json_schema()
+                if output_schema is not None:
+                    entry["output"] = {"schema": output_schema}
+                if value.strict is not None:
+                    entry["strict"] = value.strict
+                if value.execute is not None:
+                    entry["bound_execute"] = value.execute
+                converted[name] = entry
+            data["tools"] = converted
 
         # input:/output: Pydantic model class or field-type shorthand ->
         # full JSON Schema (keeping the source class for typed parsing).
@@ -707,7 +735,12 @@ class Prompt(BaseModel):
                 description=self.output.description,
             )
 
-        handlers = handlers or {}
+        bound = {
+            name: t.bound_execute
+            for name, t in self.tools.items()
+            if t.bound_execute is not None
+        }
+        handlers = {**bound, **(handlers or {})}
         unknown = sorted(set(handlers) - set(self.tools))
         if unknown:
             raise PromptError(

@@ -361,6 +361,49 @@ async def test_tool_function_form_with_explicit_schema_gets_parsed_input():
     assert isinstance(seen[0], WeatherInput) and seen[0].city == "Oslo"
 
 
+async def test_tool_fn_placed_directly_in_a_prompt():
+    calls = []
+
+    def get_weather(city: str) -> str:
+        calls.append(city)
+        return f"72F in {city}"
+
+    prompt = Prompt(
+        name="weather",
+        tools={"get_weather": tool(get_weather, description="Get weather.")},
+        messages=[{"id": "user", "role": "user", "template": "Weather in {{city}}?"}],
+        max_steps=3,
+    )
+    # the interface compiled into the document; behavior stayed out of it
+    dumped = prompt.to_dict()
+    assert dumped["tools"]["get_weather"]["input"]["schema"]["properties"]["city"][
+        "type"
+    ] == "string"
+    assert dumped["tools"]["get_weather"]["output"] == {"schema": {"type": "string"}}
+    assert "bound_execute" not in json.dumps(dumped)
+    assert load_prompt(json.loads(json.dumps(dumped))).content_hash() == prompt.content_hash()
+
+    # the execute function auto-binds as the handler
+    model = FakeModel(
+        steps=[tool_step("get_weather", tool_input={"city": "Paris"}), text_step("Done.")]
+    )
+    result = await prompt.generate({"city": "Paris"}, model=model)
+    assert calls == ["Paris"]
+    assert result.text == "Done."
+
+    # call-time handlers still win
+    model2 = FakeModel(
+        steps=[tool_step("get_weather", tool_input={"city": "Oslo"}), text_step("Done.")]
+    )
+    override_calls = []
+    await prompt.generate(
+        {"city": "Oslo"},
+        model=model2,
+        handlers={"get_weather": lambda input: override_calls.append(input) or "n/a"},
+    )
+    assert override_calls == [{"city": "Oslo"}] and calls == ["Paris"]
+
+
 # ---------------------------------------------------------------------------
 # optimize_anything-shaped candidates
 # ---------------------------------------------------------------------------
