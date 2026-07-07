@@ -24,7 +24,7 @@ from pai_sdk import (
 DOCUMENT = {
     "name": "support-agent",
     "model": "anthropic/claude-haiku-4-5",
-    "params": {"max_output_tokens": 800},
+    "params": {"maxOutputTokens": 800},
     "input": {"company": "string", "ticket": "string"},
     "output": {"reply": "string", "escalate": "boolean"},
     "system": (
@@ -48,8 +48,8 @@ DOCUMENT = {
             "output": {"plan": "string", "monthly_spend": "number"},
         }
     },
-    "tool_choice": "auto",
-    "max_steps": 4,
+    "toolChoice": "auto",
+    "maxSteps": 4,
 }
 
 

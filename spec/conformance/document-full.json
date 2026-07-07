@@ -40,8 +40,8 @@
         }
       }
     },
-    "tool_choice": "auto",
-    "max_steps": 4,
+    "toolChoice": "auto",
+    "maxSteps": 4,
     "messages": [
       {
         "id": "instructions",
@@ -78,7 +78,7 @@
       "skill:refunds",
       "ticket"
     ],
-    "contentHash": "6b6dceca8d3accbb",
+    "contentHash": "08cd769835129479",
     "roundTrip": true
   },
   "cases": [

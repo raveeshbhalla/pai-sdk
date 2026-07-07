@@ -38,7 +38,7 @@ PROMPT = load_prompt(
     {
         "name": "support-triage",
         "model": "anthropic/claude-haiku-4-5",
-        "params": {"max_output_tokens": 400},
+        "params": {"maxOutputTokens": 400},
         "input": {"company": "string", "ticket": "string"},
         "output": {"urgency": ["low", "medium", "high"], "summary": "string"},
         "system": "You triage support tickets for {{company}}.",

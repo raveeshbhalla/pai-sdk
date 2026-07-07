@@ -5,7 +5,10 @@ The prompt document is the portable source of truth shared by **pai-sdk**
 Vercel AI SDK). It is a JSON-compatible object that carries everything
 model-facing:
 
-- a `model` reference and call `params`
+- a `model` reference and call `params` (the AI SDK option vocabulary,
+  camelCase — `maxOutputTokens`, `temperature`, `topP`, `providerOptions`, …
+  — so a TypeScript runtime passes them to `generateText`/`streamText`
+  verbatim and Python maps them 1:1 onto its keyword arguments)
 - an `input` schema (the typed variable contract)
 - `messages` — system/user/assistant templates with `{{variable}}` slots and
   stable ids
@@ -80,6 +83,10 @@ Serialized form rules (what `to_dict()` emits):
 - simple-form `system:`/`user:` normalize into `messages` with ids
   `"system"` / `"user"` (the simple form is sugar; the serialized form is
   always the `messages` list)
+- all document keys are camelCase (`specVersion`, `toolChoice`, `maxSteps`,
+  `{type: "tool", toolName}`); `params` keys are AI SDK option names
+  verbatim. Snake_case spellings are rejected at load (with a did-you-mean
+  hint), never silently converted
 - object key order is never semantic: hashing sorts keys, and nothing may
   render differently based on declaration order
 

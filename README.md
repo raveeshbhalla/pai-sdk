@@ -450,7 +450,7 @@ Prompts as data: define them in YAML or JSON (in the codebase or fetched from a 
 name: support-triage
 model: anthropic/claude-haiku-4-5
 params:
-  max_output_tokens: 500
+  maxOutputTokens: 500
 output:                       # field: type shorthand, compiled to JSON Schema
   urgency: [low, medium, high]   # enum
   summary: string                # string / number / integer / boolean / string[]
@@ -501,7 +501,7 @@ The same format, JSON-encoded — natural when prompts come from a service or da
 {
   "name": "support-triage",
   "model": "anthropic/claude-haiku-4-5",
-  "params": { "max_output_tokens": 500 },
+  "params": { "maxOutputTokens": 500 },
   "output": { "urgency": ["low", "medium", "high"], "summary": "string" },
   "system": "You triage support tickets for {{company}}. Be decisive.",
   "user": "Ticket: {{ticket}}"
@@ -527,7 +527,7 @@ from pai_sdk import Prompt, load_prompt
 prompt = Prompt(
     name="support-triage",
     model="anthropic/claude-haiku-4-5",
-    params={"max_output_tokens": 500},
+    params={"maxOutputTokens": 500},
     output={"schema": {"type": "object", "properties": {"urgency": {"type": "string"}},
                        "required": ["urgency"], "additionalProperties": False}},
     messages=[
@@ -581,7 +581,7 @@ tools:
     description: Get current weather. Call when asked about conditions.
     input: { city: string }
     output: { temp_f: number }   # declared result schema (typing/interface data)
-max_steps: 5
+maxSteps: 5
 ```
 
 ```python

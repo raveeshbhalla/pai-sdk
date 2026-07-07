@@ -102,7 +102,7 @@ async def test_generate_trace_helper_captures_tool_messages_in_one_span():
                     "input": {"q": "string"},
                 }
             },
-            "max_steps": 4,
+            "maxSteps": 4,
         }
     )
     model = FakeModel(

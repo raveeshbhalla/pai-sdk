@@ -26,10 +26,12 @@ editor support.
 | `version` | string \| int | no | Free-form version marker. |
 | `description` | string | no | |
 | `model` | string | no | `provider/model-id` (e.g. `anthropic/claude-haiku-4-5`). Omit to supply `model=` at call time. |
-| `params` | object | no | `generate_text` kwargs applied on every call; per-call overrides win. |
+| `params` | object | no | Call options in the **AI SDK vocabulary** (camelCase: `maxOutputTokens`, `temperature`, `topP`, `providerOptions`, ...). TypeScript passes them to `generateText`/`streamText` verbatim; Python maps them 1:1 onto `generate_text` kwargs. Per-call overrides win. Snake_case keys are rejected with a did-you-mean error. |
 | `input` | object | no | Structured input signature — shorthand or full JSON Schema (below). |
 | `output` | object | no | Structured output — shorthand or full JSON Schema (below). |
 | `system` / `user` | string \| object | no | Simple form (below). Mutually exclusive with `messages`. |
+| `toolChoice` | string \| object | no | `auto` \| `none` \| `required` \| `{type: tool, toolName}`. |
+| `maxSteps` | integer | no | Tool-loop budget. |
 | `messages` | array | no | General form (below). |
 | `skills` | object | no | Named blocks of model-facing prose (below). |
 
@@ -166,8 +168,8 @@ tools:
   search_docs:
     description: Search documentation.
     input: { schema: { type: object, properties: {...}, ... } }   # full JSON Schema
-tool_choice: auto         # auto | none | required | {type: tool, tool_name: ...}
-max_steps: 5              # tool-loop budget -> stop_when=step_count_is(5)
+toolChoice: auto          # auto | none | required | {type: tool, toolName: ...}
+maxSteps: 5               # tool-loop budget -> stop_when=step_count_is(5)
 ```
 
 ```python

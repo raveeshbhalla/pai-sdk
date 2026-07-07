@@ -4,9 +4,9 @@
     "name": "numbers",
     "params": {
       "temperature": 1.0,
-      "top_p": 1e-05,
-      "frequency_penalty": 123.456,
-      "presence_penalty": 1e-07,
+      "topP": 1e-05,
+      "frequencyPenalty": 123.456,
+      "presencePenalty": 1e-07,
       "seed": 42,
       "custom_threshold": 1e+21
     },
@@ -16,7 +16,7 @@
     "variables": [
       "n"
     ],
-    "contentHash": "13ffefdeec893343",
+    "contentHash": "fbe65d065b567503",
     "roundTrip": true
   },
   "cases": [
